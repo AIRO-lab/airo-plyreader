@@ -172,11 +172,11 @@ def main() -> None:
 
     rect_result = load_rectangular_results(selected_dir)
     if rect_result is not None:
-        # Rectangular results found — use wireframe overlay on the output PLY
-        output_ply = selected_dir / "output_pillars.ply"
-        if output_ply.is_file():
+        # Rectangular results found — overlay wireframe on downsampled PLY
+        ds_path = prompt_downsample_selection()
+        if ds_path is not None:
             from .visualization.visualization import show_rectangular_overlay_viewer
-            overlay = ("Wireframe Overlay", str(output_ply), rect_result)
+            overlay = ("Downsampled + Wireframe", ds_path, rect_result)
             overlay_viewer_fn = show_rectangular_overlay_viewer
     else:
         # Check for pillar results (cylinder/traditional)

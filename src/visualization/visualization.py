@@ -443,6 +443,22 @@ def show_rectangular_overlay_viewer(
             )
             geometries.append(line_set)
 
+        # Build red Z-axis cylinder from center
+        center = rect_data.get("center")
+        dimensions = rect_data.get("dimensions")
+        if center is not None and dimensions is not None:
+            center_np = np.array(center)
+            axis_length = float(np.max(dimensions)) * 1.5
+
+            cylinder = o3d.geometry.TriangleMesh.create_cylinder(
+                radius=0.01, height=axis_length, resolution=20, split=4
+            )
+            cylinder.compute_vertex_normals()
+            cylinder.paint_uniform_color([1.0, 0.0, 0.0])  # red
+            # Cylinder is already along Z-axis, just translate to center
+            cylinder.translate(center_np)
+            geometries.append(cylinder)
+
         print(f"[Viewer] '{title}': {len(pcd.points):,} points, wireframe overlay")
         o3d.visualization.draw_geometries(
             geometries,
