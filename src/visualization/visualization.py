@@ -402,6 +402,125 @@ def show_overlay_viewer(
         print(f"[Viewer] '{title}' error: {e}")
 
 
+def show_combined_overlay_viewer(
+    ply_path: str,
+    overlay_data: dict,
+    title: str,
+    left: int,
+    top: int,
+) -> None:
+    """Open a PLY with both pillar axes and rectangular wireframe overlay.
+
+    Designed to run as a multiprocessing.Process target.
+    Combines rendering from show_overlay_viewer (pillar axes) and
+    show_rectangular_overlay_viewer (wireframe + Z-axis).
+
+    Args:
+        ply_path: Path to the downsampled PLY file.
+        overlay_data: Dict with optional keys 'pillars' (list[dict]) and
+            'rectangular' (dict). Missing or None keys are skipped.
+        title: Window title.
+        left: Window X position.
+        top: Window Y position.
+    """
+    try:
+        import open3d as o3d
+
+        pcd = o3d.io.read_point_cloud(ply_path)
+        if pcd.is_empty():
+            print(f"[Viewer] '{title}': empty point cloud, skipping")
+            return
+
+        geometries = [pcd]
+
+        # --- Rectangular overlay: wireframe + red Z-axis ---
+        rect_data = overlay_data.get("rectangular")
+        if rect_data is not None:
+            vertices = rect_data.get("vertices")
+            if vertices is not None:
+                verts = np.array(vertices)
+                line_set = o3d.geometry.LineSet()
+                line_set.points = o3d.utility.Vector3dVector(verts)
+                line_set.lines = o3d.utility.Vector2iVector(list(_BOX_EDGES))
+                line_set.colors = o3d.utility.Vector3dVector(
+                    [[0.0, 1.0, 1.0]] * len(_BOX_EDGES)  # cyan
+                )
+                geometries.append(line_set)
+
+            center = rect_data.get("center")
+            dimensions = rect_data.get("dimensions")
+            if center is not None and dimensions is not None:
+                center_np = np.array(center)
+                axis_length = float(np.max(dimensions)) * 1.5
+                cylinder = o3d.geometry.TriangleMesh.create_cylinder(
+                    radius=0.01, height=axis_length, resolution=20, split=4
+                )
+                cylinder.compute_vertex_normals()
+                cylinder.paint_uniform_color([1.0, 0.0, 0.0])  # red
+                cylinder.translate(center_np)
+                geometries.append(cylinder)
+
+        # --- Pillar overlay: cyan axis cylinders ---
+        pillars_data = overlay_data.get("pillars")
+        if pillars_data:
+            for p in pillars_data:
+                center = np.array(p["center"])
+                axis = np.array(p["axis"])
+                height = p["height"]
+                axis_length = height * 3.0
+
+                axis_norm = np.linalg.norm(axis)
+                if axis_norm < 1e-9:
+                    continue
+                target_axis = axis / axis_norm
+
+                cylinder = o3d.geometry.TriangleMesh.create_cylinder(
+                    radius=0.01, height=axis_length, resolution=20, split=4
+                )
+                cylinder.compute_vertex_normals()
+                cylinder.paint_uniform_color([0.0, 1.0, 1.0])  # cyan
+
+                z_axis = np.array([0.0, 0.0, 1.0])
+                rot_axis = np.cross(z_axis, target_axis)
+                rot_axis_len = np.linalg.norm(rot_axis)
+                dot = np.clip(np.dot(z_axis, target_axis), -1.0, 1.0)
+
+                if rot_axis_len < 1e-6:
+                    if dot < 0:
+                        R = o3d.geometry.get_rotation_matrix_from_axis_angle(
+                            np.array([np.pi, 0.0, 0.0])
+                        )
+                        cylinder.rotate(R, center=np.array([0.0, 0.0, 0.0]))
+                else:
+                    angle = np.arccos(dot)
+                    rot_axis_normalized = rot_axis / rot_axis_len
+                    R = o3d.geometry.get_rotation_matrix_from_axis_angle(
+                        rot_axis_normalized * angle
+                    )
+                    cylinder.rotate(R, center=np.array([0.0, 0.0, 0.0]))
+
+                cylinder.translate(center)
+                geometries.append(cylinder)
+
+        overlay_parts = []
+        if rect_data is not None:
+            overlay_parts.append("wireframe")
+        if pillars_data:
+            overlay_parts.append(f"{len(pillars_data)} axes")
+        print(f"[Viewer] '{title}': {len(pcd.points):,} points, {' + '.join(overlay_parts)}")
+
+        o3d.visualization.draw_geometries(
+            geometries,
+            window_name=title,
+            width=960,
+            height=540,
+            left=left,
+            top=top,
+        )
+    except Exception as e:
+        print(f"[Viewer] '{title}' error: {e}")
+
+
 def show_rectangular_overlay_viewer(
     ply_path: str,
     rect_data: dict,
