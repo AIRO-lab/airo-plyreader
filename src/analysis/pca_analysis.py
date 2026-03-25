@@ -292,13 +292,18 @@ def analyze_rectangular_pca(
         center_np = cp.asnumpy(center)
 
         dimensions = np.zeros(3)
+        geo_center_np = center_np.copy()
         for i in range(3):
             axis_vec = components[i]
             axis_vec = axis_vec / cp.linalg.norm(axis_vec)
             proj = cp.dot(centered_all, axis_vec)
-            dimensions[i] = float(cp.max(proj) - cp.min(proj))
+            proj_min = float(cp.min(proj))
+            proj_max = float(cp.max(proj))
+            dimensions[i] = proj_max - proj_min
+            # Offset from mean to geometric midpoint along this axis
+            geo_center_np += axes_np[i] * (proj_min + proj_max) / 2.0
 
-        # Compute 8 vertices: center ± axis_i * dim_i / 2 for all combinations
+        # Compute 8 vertices using geometric center (not mean)
         # Vertex ordering:
         #   0-3: one face, 4-7: opposite face
         #   Edges: bottom(0-1,1-2,2-3,3-0), top(4-5,5-6,6-7,7-4), vertical(0-4,1-5,2-6,3-7)
@@ -307,14 +312,14 @@ def analyze_rectangular_pca(
             half_extents.append(axes_np[i] * dimensions[i] / 2.0)
 
         vertices = np.zeros((8, 3))
-        vertices[0] = center_np - half_extents[0] - half_extents[1] - half_extents[2]
-        vertices[1] = center_np + half_extents[0] - half_extents[1] - half_extents[2]
-        vertices[2] = center_np + half_extents[0] + half_extents[1] - half_extents[2]
-        vertices[3] = center_np - half_extents[0] + half_extents[1] - half_extents[2]
-        vertices[4] = center_np - half_extents[0] - half_extents[1] + half_extents[2]
-        vertices[5] = center_np + half_extents[0] - half_extents[1] + half_extents[2]
-        vertices[6] = center_np + half_extents[0] + half_extents[1] + half_extents[2]
-        vertices[7] = center_np - half_extents[0] + half_extents[1] + half_extents[2]
+        vertices[0] = geo_center_np - half_extents[0] - half_extents[1] - half_extents[2]
+        vertices[1] = geo_center_np + half_extents[0] - half_extents[1] - half_extents[2]
+        vertices[2] = geo_center_np + half_extents[0] + half_extents[1] - half_extents[2]
+        vertices[3] = geo_center_np - half_extents[0] + half_extents[1] - half_extents[2]
+        vertices[4] = geo_center_np - half_extents[0] - half_extents[1] + half_extents[2]
+        vertices[5] = geo_center_np + half_extents[0] - half_extents[1] + half_extents[2]
+        vertices[6] = geo_center_np + half_extents[0] + half_extents[1] + half_extents[2]
+        vertices[7] = geo_center_np - half_extents[0] + half_extents[1] + half_extents[2]
 
         analysis_time = time.time() - start_time
 
@@ -326,7 +331,7 @@ def analyze_rectangular_pca(
         )
 
         return {
-            'center': center_np,
+            'center': geo_center_np,
             'axes': axes_np,
             'dimensions': dimensions,
             'vertices': vertices,
