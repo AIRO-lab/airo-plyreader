@@ -20,7 +20,7 @@ from . import config
 from .config import (
     PLY_DIR, DOWNSAMPLE_DIR, ENABLE_INTERMEDIATE_SAVES,
     GPU_DEVICE_ID, DOWNSAMPLING_ENABLED, DOWNSAMPLING_VOXEL_SIZE, ENABLE_VISUALIZATION,
-    PILLAR_JSON_FILENAME,
+    PILLAR_JSON_FILENAME, RECTANGULAR_JSON_FILENAME,
     create_run_output_dir,
 )
 from .core.gpu import PointCloudGPU
@@ -28,11 +28,15 @@ from .core.utils import save_intermediate, format_voxel_size
 from .file_io.ply_io import load_ply_file_open3d, save_ply_file_open3d
 from .preprocessing.downsampling import downsample_gpu
 from .preprocessing.color_segmentation import segment_by_color
-from .preprocessing.roi_selection import select_roi_gui, crop_to_roi
+from .preprocessing.roi_selection import select_roi_gui, crop_to_roi, select_z_roi_gui, crop_to_z_roi
 from .preprocessing.hsv_analysis import analyze_hsv_gui
 from .analysis.clustering import cluster_colored_points
-from .analysis.pca_analysis import detect_pillars_with_pca
-from .visualization.visualization import create_visualization_output, create_clustering_visualization, launch_all_viewers
+from .analysis.pca_analysis import detect_pillars_with_pca, analyze_rectangular_pca
+from .visualization.visualization import (
+    create_visualization_output, create_clustering_visualization,
+    launch_all_viewers, create_rectangular_visualization,
+    show_rectangular_overlay_viewer,
+)
 
 
 # =============================================================================
@@ -111,25 +115,29 @@ def prompt_pca_method() -> str:
     """Let the user choose the PCA analysis method.
 
     Returns:
-        'cylinder' or 'traditional'
+        'cylinder', 'traditional', or 'rectangular'
     """
     print("\nSelect PCA method:")
     print("  [1] cylinder    - Cylindrical shape detection")
     print("  [2] traditional - Traditional PCA (PC1 = reference axis)")
+    print("  [3] rectangular - Rectangular box detection (ROI-based)")
     print()
 
     while True:
         try:
-            choice = int(input("Select (1-2) [default: 1]: ") or "1")
+            choice = int(input("Select (1-3) [default: 1]: ") or "1")
             if choice == 1:
                 print("Selected: cylinder PCA\n")
                 return "cylinder"
             elif choice == 2:
                 print("Selected: traditional PCA\n")
                 return "traditional"
+            elif choice == 3:
+                print("Selected: rectangular PCA\n")
+                return "rectangular"
         except (ValueError, EOFError):
             pass
-        print("Please enter 1 or 2.")
+        print("Please enter 1, 2, or 3.")
 
 
 # =============================================================================
@@ -318,6 +326,40 @@ def save_pillar_results_json(
     return json_path
 
 
+def save_rectangular_results_json(
+    rectangular_result: Dict[str, Any],
+    source_file: str,
+) -> str:
+    """Save rectangular PCA results to JSON in the run output directory.
+
+    Args:
+        rectangular_result: Dict from analyze_rectangular_pca().
+        source_file: Original PLY filename.
+
+    Returns:
+        Path to the written JSON file.
+    """
+    result = {
+        "version": "1.0",
+        "source_file": Path(source_file).name,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "center": rectangular_result["center"].tolist(),
+        "axes": rectangular_result["axes"].tolist(),
+        "dimensions": rectangular_result["dimensions"].tolist(),
+        "vertices": rectangular_result["vertices"].tolist(),
+        "eigenvalue_ratios": rectangular_result["eigenvalue_ratios"].tolist(),
+        "point_count": rectangular_result["point_count"],
+        "analysis_method": rectangular_result["analysis_method"],
+    }
+
+    json_path = os.path.join(config._run_dir, RECTANGULAR_JSON_FILENAME)
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=2, ensure_ascii=False)
+
+    print(f"Rectangular PCA results saved to: {json_path}")
+    return json_path
+
+
 def print_detection_summary(
     detected_pillars: List[Dict[str, Any]],
     metrics: list[dict],
@@ -402,6 +444,63 @@ def main() -> None:
         roi = select_roi_gui(cloud)
         if roi is not None:
             cloud = crop_to_roi(cloud, roi)
+
+        # Rectangular PCA: separate pipeline branch
+        if pca_method == 'rectangular':
+            # Z ROI selection (side view)
+            z_roi = select_z_roi_gui(cloud)
+            if z_roi is not None:
+                h_min, h_max, z_min, z_max, axis_name = z_roi
+                cloud = crop_to_z_roi(cloud, h_min, h_max, z_min, z_max, axis_name)
+
+            print("=" * 60)
+            print("Rectangular PCA Analysis")
+            print("=" * 60)
+            rect_result = analyze_rectangular_pca(cloud.points)
+
+            if rect_result is None:
+                print("Rectangular PCA failed — no result.")
+                total_time = time.time() - overall_start_time
+                print(f"Total processing time: {total_time:.2f} seconds")
+                return
+
+            # Print summary
+            print(f"\nRectangular PCA Result:")
+            center = rect_result['center']
+            dims = rect_result['dimensions']
+            ev = rect_result['eigenvalue_ratios']
+            print(f"  Center: ({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f})")
+            print(f"  Dimensions: {dims[0]:.3f} x {dims[1]:.3f} x {dims[2]:.3f} m")
+            print(f"  Eigenvalues: [{ev[0]:.3f}, {ev[1]:.3f}, {ev[2]:.3f}]")
+            print(f"  Points: {rect_result['point_count']:,}")
+
+            # Save JSON
+            save_rectangular_results_json(rect_result, input_ply_path)
+
+            # Create visualization and save PLY
+            pts_cpu, cols_cpu = cloud.to_cpu()
+            output_points, output_colors = create_rectangular_visualization(
+                pts_cpu, cols_cpu, rect_result
+            )
+            save_ply_file_open3d(config.OUTPUT_PLY_PATH, output_points, output_colors)
+
+            total_time = time.time() - overall_start_time
+            print(f"Total processing time: {total_time:.2f} seconds")
+            print(f"Output saved to: {config.OUTPUT_PLY_PATH}")
+
+            # Launch viewers
+            if ENABLE_VISUALIZATION:
+                rect_json_path = os.path.join(config._run_dir, RECTANGULAR_JSON_FILENAME)
+                with open(rect_json_path, "r", encoding="utf-8") as f:
+                    rect_json = json.load(f)
+
+                targets = [("Rectangular PCA (Final)", config.OUTPUT_PLY_PATH)]
+                launch_all_viewers(
+                    targets,
+                    overlay=("Wireframe Overlay", config.OUTPUT_PLY_PATH, rect_json),
+                    overlay_viewer_fn=show_rectangular_overlay_viewer,
+                )
+            return
 
         # HSV analysis and filter setting
         hsv_result = analyze_hsv_gui(cloud)

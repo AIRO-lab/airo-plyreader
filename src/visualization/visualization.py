@@ -458,13 +458,16 @@ def show_rectangular_overlay_viewer(
 
 def launch_all_viewers(
     targets: list[tuple[str, str]],
-    overlay: tuple[str, str, list[dict]] | None = None,
+    overlay: tuple[str, str, list[dict] | dict] | None = None,
+    overlay_viewer_fn=None,
 ) -> None:
     """Launch Open3D viewer windows for given PLY files.
 
     Args:
         targets: List of (title, ply_path) tuples to display.
-        overlay: Optional (title, ply_path, pillars_data) for axis overlay viewer.
+        overlay: Optional (title, ply_path, data) for overlay viewer.
+        overlay_viewer_fn: Optional custom viewer function for overlay.
+            Defaults to show_overlay_viewer if not specified.
     """
     import os
     import multiprocessing
@@ -493,13 +496,14 @@ def launch_all_viewers(
 
     # Add overlay viewer if provided
     if overlay is not None:
-        ov_title, ov_path, pillars_data = overlay
+        ov_title, ov_path, overlay_data = overlay
         if os.path.isfile(ov_path):
             idx = len(targets)
             left, top = positions[idx % len(positions)]
+            viewer_fn = overlay_viewer_fn or show_overlay_viewer
             p = ctx.Process(
-                target=show_overlay_viewer,
-                args=(ov_path, pillars_data, ov_title, left, top),
+                target=viewer_fn,
+                args=(ov_path, overlay_data, ov_title, left, top),
             )
             processes.append(p)
 
