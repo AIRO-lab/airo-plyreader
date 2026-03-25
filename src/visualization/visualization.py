@@ -9,7 +9,7 @@ visualization preparation.
 import numpy as np
 import time
 from typing import List, Tuple, Dict, Any
-from ..config import GRAY_COLOR, RED_COLOR
+from ..config import GRAY_COLOR, RED_COLOR, CYAN_COLOR
 
 
 def generate_pca_axes_points(pillar: Dict[str, Any], axis_length_factor: float = 3.0) -> Tuple[np.ndarray, np.ndarray]:
@@ -47,6 +47,105 @@ def generate_pca_axes_points(pillar: Dict[str, Any], axis_length_factor: float =
                           255, 255, 0], dtype=np.uint8)  # Yellow for visibility
 
     return axis_points, axis_colors
+
+
+# 12 edges of a box: bottom face, top face, vertical connections
+_BOX_EDGES = [
+    (0, 1), (1, 2), (2, 3), (3, 0),  # bottom face
+    (4, 5), (5, 6), (6, 7), (7, 4),  # top face
+    (0, 4), (1, 5), (2, 6), (3, 7),  # vertical edges
+]
+
+_POINTS_PER_EDGE = 30
+
+
+def generate_rectangular_wireframe(
+    vertices: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Generate point-based wireframe for a rectangular box.
+
+    Creates 30 points per edge along each of the 12 box edges.
+    Used for PLY-based visualization (point representation).
+
+    Args:
+        vertices: Box vertices of shape (8, 3).
+
+    Returns:
+        Tuple of (wireframe_points, wireframe_colors).
+    """
+    all_points = []
+    for i, j in _BOX_EDGES:
+        edge_points = np.linspace(vertices[i], vertices[j], _POINTS_PER_EDGE)
+        all_points.append(edge_points)
+
+    wireframe_points = np.vstack(all_points)
+    wireframe_colors = np.full(
+        (len(wireframe_points), 3), CYAN_COLOR, dtype=np.uint8
+    )
+
+    return wireframe_points, wireframe_colors
+
+
+def create_rectangular_visualization(
+    points: np.ndarray,
+    colors: np.ndarray,
+    rectangular_result: Dict[str, Any],
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Create visualization for rectangular PCA result.
+
+    Colors original points gray, ROI points red, adds a red Z-axis
+    line from the center, and cyan wireframe edges.
+
+    Args:
+        points: Original point cloud (N, 3) NumPy array.
+        colors: Original colors (N, 3) NumPy uint8 array.
+        rectangular_result: Dict from analyze_rectangular_pca().
+
+    Returns:
+        Tuple of (output_points, output_colors).
+    """
+    print("Creating rectangular PCA visualization...")
+    start_time = time.time()
+
+    # All original points in gray
+    output_points = points.copy()
+    output_colors = np.full_like(colors, GRAY_COLOR)
+
+    # ROI inlier points in red
+    inlier_points = rectangular_result['inlier_points']
+    if len(inlier_points) > 0:
+        output_points = np.vstack([output_points, inlier_points])
+        inlier_colors = np.full(
+            (len(inlier_points), 3), RED_COLOR, dtype=np.uint8
+        )
+        output_colors = np.vstack([output_colors, inlier_colors])
+
+    # Red Z-axis line from center
+    center = rectangular_result['center']
+    dimensions = rectangular_result['dimensions']
+    axis_length = float(np.max(dimensions)) * 1.5
+    z_axis = np.array([0.0, 0.0, 1.0])
+    z_start = center - axis_length * 0.5 * z_axis
+    z_end = center + axis_length * 0.5 * z_axis
+    z_line_points = np.linspace(z_start, z_end, 30)
+    z_line_colors = np.full((30, 3), RED_COLOR, dtype=np.uint8)
+    output_points = np.vstack([output_points, z_line_points])
+    output_colors = np.vstack([output_colors, z_line_colors])
+
+    # Wireframe
+    wireframe_points, wireframe_colors = generate_rectangular_wireframe(
+        rectangular_result['vertices']
+    )
+    output_points = np.vstack([output_points, wireframe_points])
+    output_colors = np.vstack([output_colors, wireframe_colors])
+
+    viz_time = time.time() - start_time
+    print(
+        f"Created rectangular visualization with {len(output_points):,} points "
+        f"({len(wireframe_points):,} wireframe points) in {viz_time:.2f}s"
+    )
+
+    return output_points, output_colors
 
 
 def create_visualization_output(points: np.ndarray, colors: np.ndarray,
@@ -291,6 +390,60 @@ def show_overlay_viewer(
                 geometries.append(cylinder)
 
         print(f"[Viewer] '{title}': {len(pcd.points):,} points, {len(pillars_data)} axes")
+        o3d.visualization.draw_geometries(
+            geometries,
+            window_name=title,
+            width=960,
+            height=540,
+            left=left,
+            top=top,
+        )
+    except Exception as e:
+        print(f"[Viewer] '{title}' error: {e}")
+
+
+def show_rectangular_overlay_viewer(
+    ply_path: str,
+    rect_data: dict,
+    title: str,
+    left: int,
+    top: int,
+) -> None:
+    """Open a PLY with rectangular wireframe overlay in an Open3D viewer.
+
+    Designed to run as a multiprocessing.Process target.
+    Builds LineSet inside the subprocess (Open3D geometries are not picklable).
+
+    Args:
+        ply_path: Path to the visualization PLY file.
+        rect_data: Rectangular PCA result dict from JSON (has 'vertices').
+        title: Window title.
+        left: Window X position.
+        top: Window Y position.
+    """
+    try:
+        import open3d as o3d
+
+        pcd = o3d.io.read_point_cloud(ply_path)
+        if pcd.is_empty():
+            print(f"[Viewer] '{title}': empty point cloud, skipping")
+            return
+
+        geometries = [pcd]
+
+        # Build LineSet wireframe from vertices (reuse module-level _BOX_EDGES)
+        vertices = rect_data.get("vertices")
+        if vertices is not None:
+            verts = np.array(vertices)
+            line_set = o3d.geometry.LineSet()
+            line_set.points = o3d.utility.Vector3dVector(verts)
+            line_set.lines = o3d.utility.Vector2iVector(list(_BOX_EDGES))
+            line_set.colors = o3d.utility.Vector3dVector(
+                [[0.0, 1.0, 1.0]] * len(_BOX_EDGES)  # cyan
+            )
+            geometries.append(line_set)
+
+        print(f"[Viewer] '{title}': {len(pcd.points):,} points, wireframe overlay")
         o3d.visualization.draw_geometries(
             geometries,
             window_name=title,
