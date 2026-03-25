@@ -171,19 +171,24 @@ def main() -> None:
     overlay_viewer_fn = None
 
     rect_result = load_rectangular_results(selected_dir)
-    if rect_result is not None:
-        # Rectangular results found — overlay wireframe on downsampled PLY
+    pillars = load_pillar_results(selected_dir)
+
+    if rect_result is not None or pillars is not None:
         ds_path = prompt_downsample_selection()
         if ds_path is not None:
-            from .visualization.visualization import show_rectangular_overlay_viewer
-            overlay = ("Downsampled + Wireframe", ds_path, rect_result)
-            overlay_viewer_fn = show_rectangular_overlay_viewer
-    else:
-        # Check for pillar results (cylinder/traditional)
-        pillars = load_pillar_results(selected_dir)
-        if pillars is not None:
-            ds_path = prompt_downsample_selection()
-            if ds_path is not None:
+            if rect_result is not None and pillars is not None:
+                # Both results — combined viewer
+                from .visualization.visualization import show_combined_overlay_viewer
+                overlay_data = {"rectangular": rect_result, "pillars": pillars}
+                overlay = ("Downsampled + Combined", ds_path, overlay_data)
+                overlay_viewer_fn = show_combined_overlay_viewer
+            elif rect_result is not None:
+                # Rectangular only
+                from .visualization.visualization import show_rectangular_overlay_viewer
+                overlay = ("Downsampled + Wireframe", ds_path, rect_result)
+                overlay_viewer_fn = show_rectangular_overlay_viewer
+            else:
+                # Pillar only
                 overlay = ("Downsampled + Axes", ds_path, pillars)
 
     from .visualization.visualization import launch_all_viewers
