@@ -20,6 +20,7 @@ PLY_DIR = "ply"
 DOWNSAMPLE_DIR = "ply/downsample"
 OUTPUT_DIR = "output"
 PILLAR_JSON_FILENAME = "pillar_results.json"
+RECTANGULAR_JSON_FILENAME = "rectangular_pca_results.json"
 
 # Runtime paths — set by create_run_output_dir()
 _run_dir = None
@@ -135,6 +136,7 @@ PILLAR_AXIS_MAX_ANGLE_DEG = None
 # Visualization Parameters
 GRAY_COLOR = (128, 128, 128)              # Gray color for original points
 RED_COLOR = (255, 0, 0)                   # Red color for detected pillars
+CYAN_COLOR = (0, 255, 255)
 # Points per unit length for cylinder sampling
 CYLINDER_SAMPLE_DENSITY = 50
 
@@ -148,7 +150,7 @@ ENABLE_VISUALIZATION = True
 # Downsampling Parameters (GPU Voxel Grid)
 DOWNSAMPLING_ENABLED = True                # Enable/disable downsampling step
 # Voxel size for voxel grid method (meters)
-DOWNSAMPLING_VOXEL_SIZE = 0.0005
+DOWNSAMPLING_VOXEL_SIZE = 0.0001
 
 # =============================================================================
 # PCA ANALYSIS PARAMETERS
