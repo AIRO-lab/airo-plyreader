@@ -76,6 +76,25 @@ def load_pillar_results(run_dir: Path) -> list[dict] | None:
     return pillars
 
 
+def load_rectangular_results(run_dir: Path) -> dict | None:
+    """Load rectangular_pca_results.json from a run directory if it exists.
+
+    Returns:
+        Rectangular result dict, or None if JSON not found.
+    """
+    from .config import RECTANGULAR_JSON_FILENAME
+    json_path = run_dir / RECTANGULAR_JSON_FILENAME
+    if not json_path.is_file():
+        return None
+
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    print(f"Loaded rectangular PCA results from {RECTANGULAR_JSON_FILENAME}")
+    print(f"  Dimensions: {data.get('dimensions', 'N/A')}")
+    return data
+
+
 def prompt_downsample_selection() -> str | None:
     """Let the user pick a downsampled PLY file from ply/downsample/.
 
@@ -147,16 +166,28 @@ def main() -> None:
         print(f"  - {title}")
     print()
 
-    # Check for pillar results JSON and set up overlay
+    # Check for result JSON files and set up overlay
     overlay = None
-    pillars = load_pillar_results(selected_dir)
-    if pillars is not None:
-        ds_path = prompt_downsample_selection()
-        if ds_path is not None:
-            overlay = ("Downsampled + Axes", ds_path, pillars)
+    overlay_viewer_fn = None
+
+    rect_result = load_rectangular_results(selected_dir)
+    if rect_result is not None:
+        # Rectangular results found — use wireframe overlay on the output PLY
+        output_ply = selected_dir / "output_pillars.ply"
+        if output_ply.is_file():
+            from .visualization.visualization import show_rectangular_overlay_viewer
+            overlay = ("Wireframe Overlay", str(output_ply), rect_result)
+            overlay_viewer_fn = show_rectangular_overlay_viewer
+    else:
+        # Check for pillar results (cylinder/traditional)
+        pillars = load_pillar_results(selected_dir)
+        if pillars is not None:
+            ds_path = prompt_downsample_selection()
+            if ds_path is not None:
+                overlay = ("Downsampled + Axes", ds_path, pillars)
 
     from .visualization.visualization import launch_all_viewers
-    launch_all_viewers(targets, overlay=overlay)
+    launch_all_viewers(targets, overlay=overlay, overlay_viewer_fn=overlay_viewer_fn)
 
 
 if __name__ == "__main__":
