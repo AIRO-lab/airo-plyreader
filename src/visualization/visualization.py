@@ -469,17 +469,20 @@ def show_combined_overlay_viewer(
                 height = p["height"]
                 axis_length = height * 3.0
 
+                # Normalize target axis
                 axis_norm = np.linalg.norm(axis)
                 if axis_norm < 1e-9:
                     continue
                 target_axis = axis / axis_norm
 
+                # Create cylinder along Z-axis
                 cylinder = o3d.geometry.TriangleMesh.create_cylinder(
                     radius=0.01, height=axis_length, resolution=20, split=4
                 )
                 cylinder.compute_vertex_normals()
                 cylinder.paint_uniform_color([0.0, 1.0, 1.0])  # cyan
 
+                # Rotate from Z-axis to target axis
                 z_axis = np.array([0.0, 0.0, 1.0])
                 rot_axis = np.cross(z_axis, target_axis)
                 rot_axis_len = np.linalg.norm(rot_axis)
@@ -487,10 +490,12 @@ def show_combined_overlay_viewer(
 
                 if rot_axis_len < 1e-6:
                     if dot < 0:
+                        # Anti-parallel: rotate 180 degrees around X-axis
                         R = o3d.geometry.get_rotation_matrix_from_axis_angle(
                             np.array([np.pi, 0.0, 0.0])
                         )
                         cylinder.rotate(R, center=np.array([0.0, 0.0, 0.0]))
+                    # else: parallel to Z, no rotation needed
                 else:
                     angle = np.arccos(dot)
                     rot_axis_normalized = rot_axis / rot_axis_len
@@ -499,6 +504,7 @@ def show_combined_overlay_viewer(
                     )
                     cylinder.rotate(R, center=np.array([0.0, 0.0, 0.0]))
 
+                # Translate to pillar center
                 cylinder.translate(center)
                 geometries.append(cylinder)
 
