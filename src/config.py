@@ -21,6 +21,7 @@ DOWNSAMPLE_DIR = "ply/downsample"
 OUTPUT_DIR = "output"
 PILLAR_JSON_FILENAME = "pillar_results.json"
 RECTANGULAR_JSON_FILENAME = "rectangular_pca_results.json"
+TRIPLANE_JSON_FILENAME = "triplane_results.json"
 
 # Runtime paths — set by create_run_output_dir()
 _run_dir = None
@@ -45,7 +46,7 @@ def create_run_output_dir(ply_path: str) -> str:
     # Extract and sanitize filename
     ply_name = os.path.splitext(os.path.basename(ply_path))[0]
     ply_name = ply_name.replace(" ", "_")
-    ply_name = re.sub(r"[^a-zA-Z0-9_.\-]", "", ply_name)
+    ply_name = re.sub(r"[^\w.\-]", "", ply_name)
 
     # Generate compact timestamp
     timestamp = datetime.now().strftime("%y%m%d%H%M%S")
@@ -175,3 +176,23 @@ PCA_MAX_TERTIARY_VARIANCE = 0.4
 MAX_POINTS_PER_CLUSTER = 50000
 # Number of top clusters (by point count) to analyze with PCA
 TOP_CLUSTERS_TO_ANALYZE = 5
+
+# =============================================================================
+# TRIPLANE PCA PARAMETERS
+# =============================================================================
+
+# KNN neighbor count for local surface normal estimation
+TRIPLANE_K_NEIGHBORS = 50
+# Visualization square side length (meters)
+TRIPLANE_SQUARE_SIZE = 0.5
+# Minimum angle (degrees) between any two plane normals to accept as distinct
+TRIPLANE_ANGLE_THRESHOLD = 5.0
+# Maximum random point sampling attempts before giving up
+TRIPLANE_MAX_ATTEMPTS = 100
+# Flatness warning threshold (λ3/sum(λ) above this triggers warning)
+TRIPLANE_FLATNESS_WARN = 0.1
+
+# Triplane visualization colors (RGB 0-1 for Open3D, converted to 0-255 for PLY)
+TRIPLANE_COLOR_BLUE = [0.0, 0.0, 1.0]
+TRIPLANE_COLOR_MAGENTA = [1.0, 0.0, 1.0]
+TRIPLANE_COLOR_GREEN = [0.0, 1.0, 0.0]
