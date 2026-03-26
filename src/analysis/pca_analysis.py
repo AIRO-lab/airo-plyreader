@@ -10,12 +10,15 @@ import numpy as np
 import time
 from typing import List, Optional, Dict, Any
 from cuml.decomposition import PCA
+from cuml.neighbors import NearestNeighbors
 from ..config import (
     PILLAR_RADIUS_MIN, PILLAR_RADIUS_MAX, PILLAR_HEIGHT_MIN,
     PILLAR_HEIGHT_MAX, PILLAR_AXIS_MAX_ANGLE_DEG,
     MAX_POINTS_PER_CLUSTER, PCA_CYLINDER_THRESHOLD,
     PCA_CROSS_SECTION_RATIO_THRESHOLD, PCA_MIN_SECONDARY_VARIANCE,
     PCA_MAX_TERTIARY_VARIANCE, TOP_CLUSTERS_TO_ANALYZE,
+    TRIPLANE_K_NEIGHBORS, TRIPLANE_SQUARE_SIZE, TRIPLANE_ANGLE_THRESHOLD,
+    TRIPLANE_MAX_ATTEMPTS, TRIPLANE_FLATNESS_WARN,
 )
 
 
@@ -344,6 +347,155 @@ def analyze_rectangular_pca(
     except Exception as e:
         print(f"    Rectangular PCA analysis error: {str(e)}")
         return None
+
+
+def analyze_triplane_pca(
+    points: cp.ndarray,
+) -> Optional[Dict[str, Any]]:
+    """Detect 3 distinct planes via random point sampling + KNN + local PCA.
+
+    For each random seed point, finds K nearest neighbors, computes the
+    local covariance matrix, and extracts the surface normal (smallest
+    eigenvalue's eigenvector). Repeats until 3 planes with sufficiently
+    different normals are found.
+
+    Args:
+        points: CuPy array of shape (N, 3), float32. ROI-cropped points.
+
+    Returns:
+        Dictionary with planes, angles, point_count, analysis_method.
+        Returns None if fewer than 3 distinct planes are found.
+    """
+    n_points = len(points)
+    if n_points < TRIPLANE_K_NEIGHBORS:
+        print(f"  Triplane PCA: too few points ({n_points} < {TRIPLANE_K_NEIGHBORS}), skipping")
+        return None
+
+    print(f"  Analyzing triplane PCA ({n_points:,} points)...")
+    start_time = time.time()
+
+    # Fit KNN model once on full ROI
+    k = min(TRIPLANE_K_NEIGHBORS, n_points)
+    nn_model = NearestNeighbors(n_neighbors=k, metric='euclidean')
+    nn_model.fit(points)
+
+    planes = []
+    excluded_indices = set()
+    attempts = 0
+    all_indices = np.arange(n_points)
+
+    while len(planes) < 3 and attempts < TRIPLANE_MAX_ATTEMPTS:
+        attempts += 1
+
+        # Pick a random index not in excluded set
+        available = np.setdiff1d(all_indices, np.array(list(excluded_indices), dtype=np.int64))
+        if len(available) == 0:
+            print(f"    No more available points after {attempts} attempts")
+            break
+        seed_idx = int(np.random.choice(available))
+
+        # Query KNN on GPU
+        seed_point = points[seed_idx:seed_idx+1]  # shape (1, 3)
+        distances, neighbor_indices = nn_model.kneighbors(seed_point)
+        neighbor_indices_np = cp.asnumpy(neighbor_indices[0]).astype(int)
+
+        # Transfer neighbors to CPU for local PCA
+        neighbor_points = cp.asnumpy(points[neighbor_indices_np])  # (K, 3)
+
+        # Compute covariance matrix and eigendecomposition
+        centroid = np.mean(neighbor_points, axis=0)
+        centered = neighbor_points - centroid
+        cov_matrix = np.dot(centered.T, centered) / (len(centered) - 1)
+
+        # eigh returns ascending order: λ_small first
+        eigenvalues, eigenvectors = np.linalg.eigh(cov_matrix)
+
+        # Reverse to get λ1 >= λ2 >= λ3 convention
+        eigenvalues = eigenvalues[::-1]
+        eigenvectors = eigenvectors[:, ::-1]
+
+        ev_sum = np.sum(eigenvalues)
+        if ev_sum < 1e-12:
+            excluded_indices.add(seed_idx)
+            continue
+
+        # v1, v2 = plane axes; v3 = normal (smallest eigenvalue)
+        v1 = eigenvectors[:, 0]
+        v2 = eigenvectors[:, 1]
+        normal = eigenvectors[:, 2]
+
+        # Normalize
+        normal = normal / np.linalg.norm(normal)
+        v1 = v1 / np.linalg.norm(v1)
+        v2 = v2 / np.linalg.norm(v2)
+
+        # Compute flatness
+        flatness = float(eigenvalues[2] / ev_sum)
+        if flatness > TRIPLANE_FLATNESS_WARN:
+            print(f"    Warning: plane {len(planes)} flatness={flatness:.4f} (threshold={TRIPLANE_FLATNESS_WARN})")
+
+        # Check angle against existing planes
+        is_distinct = True
+        for existing in planes:
+            existing_normal = np.array(existing['normal'])
+            dot = np.abs(np.dot(normal, existing_normal))
+            angle = float(np.degrees(np.arccos(np.clip(dot, 0.0, 1.0))))
+            if angle < TRIPLANE_ANGLE_THRESHOLD:
+                is_distinct = False
+                break
+
+        if is_distinct:
+            # Compute square vertices
+            seed_center = cp.asnumpy(points[seed_idx])
+            half = TRIPLANE_SQUARE_SIZE / 2.0
+            sq_v1 = seed_center + half * v1 + half * v2
+            sq_v2 = seed_center - half * v1 + half * v2
+            sq_v3 = seed_center - half * v1 - half * v2
+            sq_v4 = seed_center + half * v1 - half * v2
+
+            ev_ratios = (eigenvalues / ev_sum).tolist()
+
+            planes.append({
+                'center': seed_center.tolist(),
+                'normal': normal.tolist(),
+                'axis1': v1.tolist(),
+                'axis2': v2.tolist(),
+                'flatness': flatness,
+                'eigenvalue_ratios': ev_ratios,
+                'num_neighbors': k,
+                'square_vertices': [sq_v1.tolist(), sq_v2.tolist(), sq_v3.tolist(), sq_v4.tolist()],
+            })
+            print(f"    Plane {len(planes)}/3 found (attempt {attempts}): "
+                  f"flatness={flatness:.4f}, normal=[{normal[0]:.3f}, {normal[1]:.3f}, {normal[2]:.3f}]")
+
+        # Exclude seed + neighbors
+        excluded_indices.add(seed_idx)
+        excluded_indices.update(neighbor_indices_np.tolist())
+
+    if len(planes) < 3:
+        print(f"  Triplane PCA failed: only {len(planes)}/3 planes found after {attempts} attempts")
+        return None
+
+    # Compute pairwise angles
+    angles = {}
+    for i in range(3):
+        for j in range(i + 1, 3):
+            ni = np.array(planes[i]['normal'])
+            nj = np.array(planes[j]['normal'])
+            dot = np.abs(np.dot(ni, nj))
+            angle = float(np.degrees(np.arccos(np.clip(dot, 0.0, 1.0))))
+            angles[f'plane_{i}_{j}'] = round(angle, 3)
+
+    analysis_time = time.time() - start_time
+    print(f"    Triplane PCA completed in {analysis_time:.2f}s")
+    print(f"    Angles: {angles}")
+
+    return {
+        'planes': planes,
+        'angles': angles,
+        'point_count': n_points,
+        'analysis_method': 'triplane_PCA',
+    }
 
 
 def detect_pillars_with_pca(
