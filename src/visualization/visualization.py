@@ -9,7 +9,11 @@ visualization preparation.
 import numpy as np
 import time
 from typing import List, Tuple, Dict, Any
-from ..config import GRAY_COLOR, RED_COLOR, CYAN_COLOR
+from ..config import (
+    GRAY_COLOR, RED_COLOR, CYAN_COLOR,
+    TRIPLANE_COLOR_BLUE, TRIPLANE_COLOR_MAGENTA, TRIPLANE_COLOR_GREEN,
+    TRIPLANE_SQUARE_SIZE,
+)
 
 
 def generate_pca_axes_points(pillar: Dict[str, Any], axis_length_factor: float = 3.0) -> Tuple[np.ndarray, np.ndarray]:
@@ -80,7 +84,7 @@ def generate_rectangular_wireframe(
 
     wireframe_points = np.vstack(all_points)
     wireframe_colors = np.full(
-        (len(wireframe_points), 3), CYAN_COLOR, dtype=np.uint8
+        (len(wireframe_points), 3), (255, 255, 0), dtype=np.uint8  # yellow
     )
 
     return wireframe_points, wireframe_colors
@@ -144,6 +148,87 @@ def create_rectangular_visualization(
         f"Created rectangular visualization with {len(output_points):,} points "
         f"({len(wireframe_points):,} wireframe points) in {viz_time:.2f}s"
     )
+
+    return output_points, output_colors
+
+
+# Grid density for triplane square visualization
+_PLANE_GRID_SIZE = 30
+
+
+def create_triplane_visualization(
+    points: np.ndarray,
+    colors: np.ndarray,
+    triplane_result: Dict[str, Any],
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Create visualization for triplane PCA result.
+
+    Colors original points gray, then draws 3 colored squares and
+    their normal vectors as point-based lines.
+
+    Args:
+        points: Original point cloud (N, 3) NumPy array.
+        colors: Original colors (N, 3) NumPy uint8 array.
+        triplane_result: Dict from analyze_triplane_pca().
+
+    Returns:
+        Tuple of (output_points, output_colors).
+    """
+    print("Creating triplane PCA visualization...")
+    start_time = time.time()
+
+    # All original points in gray
+    output_points = points.copy()
+    output_colors = np.full_like(colors, GRAY_COLOR)
+
+    plane_colors_rgb = [
+        TRIPLANE_COLOR_BLUE,
+        TRIPLANE_COLOR_MAGENTA,
+        TRIPLANE_COLOR_GREEN,
+    ]
+    plane_labels = ["blue", "magenta", "green"]
+
+    for i, plane in enumerate(triplane_result['planes']):
+        center = np.array(plane['center'])
+        axis1 = np.array(plane['axis1'])
+        axis2 = np.array(plane['axis2'])
+        normal = np.array(plane['normal'])
+
+        # Generate grid points on the square
+        half = TRIPLANE_SQUARE_SIZE / 2.0
+        u = np.linspace(-half, half, _PLANE_GRID_SIZE)
+        v = np.linspace(-half, half, _PLANE_GRID_SIZE)
+        uu, vv = np.meshgrid(u, v)
+        uu_flat = uu.flatten()
+        vv_flat = vv.flatten()
+
+        square_points = (
+            center[np.newaxis, :]
+            + uu_flat[:, np.newaxis] * axis1[np.newaxis, :]
+            + vv_flat[:, np.newaxis] * axis2[np.newaxis, :]
+        )
+
+        # Color (convert 0-1 float to 0-255 uint8)
+        color_uint8 = np.array([int(c * 255) for c in plane_colors_rgb[i]], dtype=np.uint8)
+        square_colors = np.full((len(square_points), 3), color_uint8, dtype=np.uint8)
+
+        output_points = np.vstack([output_points, square_points])
+        output_colors = np.vstack([output_colors, square_colors])
+
+        # Normal vector line from center
+        normal_length = TRIPLANE_SQUARE_SIZE * 0.5
+        normal_start = center
+        normal_end = center + normal_length * normal
+        normal_line = np.linspace(normal_start, normal_end, _PLANE_GRID_SIZE)
+        normal_colors = np.full((len(normal_line), 3), color_uint8, dtype=np.uint8)
+
+        output_points = np.vstack([output_points, normal_line])
+        output_colors = np.vstack([output_colors, normal_colors])
+
+        print(f"    Plane {i} ({plane_labels[i]}): {len(square_points)} grid + {len(normal_line)} normal points")
+
+    viz_time = time.time() - start_time
+    print(f"Created triplane visualization with {len(output_points):,} points in {viz_time:.2f}s")
 
     return output_points, output_colors
 
@@ -287,6 +372,52 @@ def create_clustering_visualization(
     return viz_points, viz_colors
 
 
+def _show_with_capture(geometries, title, width, height, left, top, save_dir=None):
+    """Show Open3D geometries in a viewer with 's' key screenshot capture.
+
+    Replaces draw_geometries for overlay viewers. Press 'S' to save
+    the current view as a PNG file.
+
+    Args:
+        geometries: List of Open3D geometry objects to display.
+        title: Window title.
+        width: Window width in pixels.
+        height: Window height in pixels.
+        left: Window X position.
+        top: Window Y position.
+        save_dir: Directory to save captures. Uses cwd if None.
+    """
+    import open3d as o3d
+    import os
+    from datetime import datetime
+
+    vis = o3d.visualization.VisualizerWithKeyCallback()
+    vis.create_window(window_name=title, width=width, height=height, left=left, top=top)
+
+    for geom in geometries:
+        vis.add_geometry(geom)
+
+    capture_count = [0]
+
+    def on_key_s(vis):
+        capture_count[0] += 1
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"capture_{timestamp}_{capture_count[0]:03d}.png"
+        if save_dir:
+            filepath = os.path.join(save_dir, filename)
+        else:
+            filepath = filename
+        vis.capture_screen_image(filepath)
+        print(f"[Capture] Saved: {filepath}")
+        return False
+
+    vis.register_key_callback(ord('S'), on_key_s)
+    print(f"[Viewer] Press 'S' to capture screenshot")
+
+    vis.run()
+    vis.destroy_window()
+
+
 def show_viewer(ply_path: str, title: str, left: int, top: int) -> None:
     """
     Open a PLY file in an Open3D interactive viewer window.
@@ -319,6 +450,7 @@ def show_overlay_viewer(
     title: str,
     left: int,
     top: int,
+    save_dir: str | None = None,
 ) -> None:
     """Open a downsampled PLY with pillar axis overlay in an Open3D viewer.
 
@@ -390,14 +522,7 @@ def show_overlay_viewer(
                 geometries.append(cylinder)
 
         print(f"[Viewer] '{title}': {len(pcd.points):,} points, {len(pillars_data)} axes")
-        o3d.visualization.draw_geometries(
-            geometries,
-            window_name=title,
-            width=960,
-            height=540,
-            left=left,
-            top=top,
-        )
+        _show_with_capture(geometries, title, 960, 540, left, top, save_dir)
     except Exception as e:
         print(f"[Viewer] '{title}' error: {e}")
 
@@ -408,8 +533,9 @@ def show_combined_overlay_viewer(
     title: str,
     left: int,
     top: int,
+    save_dir: str | None = None,
 ) -> None:
-    """Open a PLY with both pillar axes and rectangular wireframe overlay.
+    """Open a PLY with pillar axes, rectangular wireframe, and/or triplane overlay.
 
     Designed to run as a multiprocessing.Process target.
     Combines rendering from show_overlay_viewer (pillar axes) and
@@ -443,7 +569,7 @@ def show_combined_overlay_viewer(
                 line_set.points = o3d.utility.Vector3dVector(verts)
                 line_set.lines = o3d.utility.Vector2iVector(list(_BOX_EDGES))
                 line_set.colors = o3d.utility.Vector3dVector(
-                    [[0.0, 1.0, 1.0]] * len(_BOX_EDGES)  # cyan
+                    [[1.0, 1.0, 0.0]] * len(_BOX_EDGES)  # yellow
                 )
                 geometries.append(line_set)
 
@@ -508,21 +634,77 @@ def show_combined_overlay_viewer(
                 cylinder.translate(center)
                 geometries.append(cylinder)
 
+        # --- Triplane overlay: colored square meshes + normal cylinders ---
+        triplane_data = overlay_data.get("triplane")
+        if triplane_data is not None:
+            plane_colors = [
+                [0.0, 0.0, 1.0],   # blue
+                [1.0, 0.0, 1.0],   # magenta
+                [0.0, 1.0, 0.0],   # green
+            ]
+            tri_planes = triplane_data.get("planes", [])
+            for i, plane in enumerate(tri_planes):
+                color = plane_colors[i % len(plane_colors)]
+                verts = plane.get("square_vertices")
+                if verts is None or len(verts) < 4:
+                    continue
+                v = np.array(verts)
+
+                mesh = o3d.geometry.TriangleMesh()
+                mesh.vertices = o3d.utility.Vector3dVector(v)
+                mesh.triangles = o3d.utility.Vector3iVector([[0, 1, 2], [0, 2, 3]])
+                mesh.compute_vertex_normals()
+                mesh.paint_uniform_color(color)
+                geometries.append(mesh)
+
+                # Normal cylinder
+                center_arr = plane.get("center")
+                normal_arr = plane.get("normal")
+                if center_arr is not None and normal_arr is not None:
+                    center_np = np.array(center_arr)
+                    normal_np = np.array(normal_arr)
+                    normal_norm = np.linalg.norm(normal_np)
+                    if normal_norm < 1e-9:
+                        continue
+                    normal_np = normal_np / normal_norm
+
+                    cyl_length = 0.3
+                    cyl = o3d.geometry.TriangleMesh.create_cylinder(
+                        radius=0.008, height=cyl_length, resolution=20, split=4
+                    )
+                    cyl.compute_vertex_normals()
+                    cyl.paint_uniform_color(color)
+
+                    z_axis = np.array([0.0, 0.0, 1.0])
+                    rot_ax = np.cross(z_axis, normal_np)
+                    rot_ax_len = np.linalg.norm(rot_ax)
+                    dot_val = np.clip(np.dot(z_axis, normal_np), -1.0, 1.0)
+
+                    if rot_ax_len < 1e-6:
+                        if dot_val < 0:
+                            R = o3d.geometry.get_rotation_matrix_from_axis_angle(
+                                np.array([np.pi, 0.0, 0.0])
+                            )
+                            cyl.rotate(R, center=np.array([0.0, 0.0, 0.0]))
+                    else:
+                        angle = np.arccos(dot_val)
+                        R = o3d.geometry.get_rotation_matrix_from_axis_angle(
+                            (rot_ax / rot_ax_len) * angle
+                        )
+                        cyl.rotate(R, center=np.array([0.0, 0.0, 0.0]))
+
+                    cyl.translate(center_np + normal_np * cyl_length / 2)
+                    geometries.append(cyl)
+
         overlay_parts = []
         if rect_data is not None:
             overlay_parts.append("wireframe")
         if pillars_data:
             overlay_parts.append(f"{len(pillars_data)} axes")
+        if triplane_data is not None:
+            overlay_parts.append(f"{len(triplane_data.get('planes', []))} planes")
         print(f"[Viewer] '{title}': {len(pcd.points):,} points, {' + '.join(overlay_parts)}")
-
-        o3d.visualization.draw_geometries(
-            geometries,
-            window_name=title,
-            width=960,
-            height=540,
-            left=left,
-            top=top,
-        )
+        _show_with_capture(geometries, title, 960, 540, left, top, save_dir)
     except Exception as e:
         print(f"[Viewer] '{title}' error: {e}")
 
@@ -533,6 +715,7 @@ def show_rectangular_overlay_viewer(
     title: str,
     left: int,
     top: int,
+    save_dir: str | None = None,
 ) -> None:
     """Open a PLY with rectangular wireframe overlay in an Open3D viewer.
 
@@ -564,7 +747,7 @@ def show_rectangular_overlay_viewer(
             line_set.points = o3d.utility.Vector3dVector(verts)
             line_set.lines = o3d.utility.Vector2iVector(list(_BOX_EDGES))
             line_set.colors = o3d.utility.Vector3dVector(
-                [[0.0, 1.0, 1.0]] * len(_BOX_EDGES)  # cyan
+                [[1.0, 1.0, 0.0]] * len(_BOX_EDGES)  # yellow
             )
             geometries.append(line_set)
 
@@ -585,14 +768,108 @@ def show_rectangular_overlay_viewer(
             geometries.append(cylinder)
 
         print(f"[Viewer] '{title}': {len(pcd.points):,} points, wireframe overlay")
-        o3d.visualization.draw_geometries(
-            geometries,
-            window_name=title,
-            width=960,
-            height=540,
-            left=left,
-            top=top,
-        )
+        _show_with_capture(geometries, title, 960, 540, left, top, save_dir)
+    except Exception as e:
+        print(f"[Viewer] '{title}' error: {e}")
+
+
+def show_triplane_overlay_viewer(
+    ply_path: str,
+    triplane_data: dict,
+    title: str,
+    left: int,
+    top: int,
+    save_dir: str | None = None,
+) -> None:
+    """Open a PLY with triplane square overlay in an Open3D viewer.
+
+    Designed to run as a multiprocessing.Process target.
+    Renders 3 colored squares as TriangleMesh and normal direction cylinders.
+
+    Args:
+        ply_path: Path to the visualization PLY file.
+        triplane_data: Triplane result dict from JSON (has 'planes').
+        title: Window title.
+        left: Window X position.
+        top: Window Y position.
+        save_dir: Directory for screenshot captures.
+    """
+    try:
+        import open3d as o3d
+
+        pcd = o3d.io.read_point_cloud(ply_path)
+        if pcd.is_empty():
+            print(f"[Viewer] '{title}': empty point cloud, skipping")
+            return
+
+        geometries = [pcd]
+
+        plane_colors = [
+            [0.0, 0.0, 1.0],   # blue
+            [1.0, 0.0, 1.0],   # magenta
+            [0.0, 1.0, 0.0],   # green
+        ]
+
+        planes = triplane_data.get("planes", [])
+        for i, plane in enumerate(planes):
+            color = plane_colors[i % len(plane_colors)]
+            verts = plane.get("square_vertices")
+            if verts is None or len(verts) < 4:
+                continue
+            v = np.array(verts)
+
+            # TriangleMesh: 4 vertices, 2 triangles
+            mesh = o3d.geometry.TriangleMesh()
+            mesh.vertices = o3d.utility.Vector3dVector(v)
+            mesh.triangles = o3d.utility.Vector3iVector([[0, 1, 2], [0, 2, 3]])
+            mesh.compute_vertex_normals()
+            mesh.paint_uniform_color(color)
+            geometries.append(mesh)
+
+            # Normal direction cylinder
+            center = plane.get("center")
+            normal = plane.get("normal")
+            if center is not None and normal is not None:
+                center_np = np.array(center)
+                normal_np = np.array(normal)
+                normal_norm = np.linalg.norm(normal_np)
+                if normal_norm < 1e-9:
+                    continue
+                normal_np = normal_np / normal_norm
+
+                cyl_length = 0.3
+                cylinder = o3d.geometry.TriangleMesh.create_cylinder(
+                    radius=0.008, height=cyl_length, resolution=20, split=4
+                )
+                cylinder.compute_vertex_normals()
+                cylinder.paint_uniform_color(color)
+
+                # Rotate from Z-axis to normal direction
+                z_axis = np.array([0.0, 0.0, 1.0])
+                rot_axis = np.cross(z_axis, normal_np)
+                rot_axis_len = np.linalg.norm(rot_axis)
+                dot = np.clip(np.dot(z_axis, normal_np), -1.0, 1.0)
+
+                if rot_axis_len < 1e-6:
+                    if dot < 0:
+                        R = o3d.geometry.get_rotation_matrix_from_axis_angle(
+                            np.array([np.pi, 0.0, 0.0])
+                        )
+                        cylinder.rotate(R, center=np.array([0.0, 0.0, 0.0]))
+                else:
+                    angle = np.arccos(dot)
+                    rot_axis_normalized = rot_axis / rot_axis_len
+                    R = o3d.geometry.get_rotation_matrix_from_axis_angle(
+                        rot_axis_normalized * angle
+                    )
+                    cylinder.rotate(R, center=np.array([0.0, 0.0, 0.0]))
+
+                # Translate to center + offset along normal
+                cylinder.translate(center_np + normal_np * cyl_length / 2)
+                geometries.append(cylinder)
+
+        print(f"[Viewer] '{title}': {len(pcd.points):,} points, {len(planes)} planes")
+        _show_with_capture(geometries, title, 960, 540, left, top, save_dir)
     except Exception as e:
         print(f"[Viewer] '{title}' error: {e}")
 
@@ -601,6 +878,7 @@ def launch_all_viewers(
     targets: list[tuple[str, str]],
     overlay: tuple[str, str, list[dict] | dict] | None = None,
     overlay_viewer_fn=None,
+    save_dir: str | None = None,
 ) -> None:
     """Launch Open3D viewer windows for given PLY files.
 
@@ -609,6 +887,7 @@ def launch_all_viewers(
         overlay: Optional (title, ply_path, data) for overlay viewer.
         overlay_viewer_fn: Optional custom viewer function for overlay.
             Defaults to show_overlay_viewer if not specified.
+        save_dir: Directory for overlay viewer screenshot captures ('S' key).
     """
     import os
     import multiprocessing
@@ -645,6 +924,7 @@ def launch_all_viewers(
             p = ctx.Process(
                 target=viewer_fn,
                 args=(ov_path, overlay_data, ov_title, left, top),
+                kwargs={"save_dir": save_dir},
             )
             processes.append(p)
 
