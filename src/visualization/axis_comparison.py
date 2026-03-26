@@ -146,7 +146,7 @@ def plot_unit_sphere(
     x = np.outer(np.cos(u), np.sin(v))
     y = np.outer(np.sin(u), np.sin(v))
     z = np.outer(np.ones_like(u), np.cos(v))
-    ax.plot_wireframe(x, y, z, color="#CCCCCC", alpha=0.15, linewidth=0.3)
+    ax.plot_wireframe(x, y, z, color="#AAAAAA", alpha=0.4, linewidth=0.5)
 
     # Direction points
     ax.scatter(*pillar_axis, color="#00FFFF", s=100, zorder=5,
