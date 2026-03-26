@@ -194,6 +194,11 @@ def main() -> None:
     from .visualization.visualization import launch_all_viewers
     launch_all_viewers(targets, overlay=overlay, overlay_viewer_fn=overlay_viewer_fn)
 
+    # Axis comparison figures (after viewers close)
+    if rect_result is not None and pillars is not None:
+        from .visualization.axis_comparison import generate_axis_comparison
+        generate_axis_comparison(pillars, rect_result, output_dir=str(selected_dir))
+
 
 if __name__ == "__main__":
     main()
