@@ -95,6 +95,25 @@ def load_rectangular_results(run_dir: Path) -> dict | None:
     return data
 
 
+def load_triplane_results(run_dir: Path) -> dict | None:
+    """Load triplane_results.json from a run directory if it exists.
+
+    Returns:
+        Triplane result dict, or None if JSON not found.
+    """
+    from .config import TRIPLANE_JSON_FILENAME
+    json_path = run_dir / TRIPLANE_JSON_FILENAME
+    if not json_path.is_file():
+        return None
+
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    planes = data.get("planes", [])
+    print(f"Loaded {len(planes)} triplane(s) from {TRIPLANE_JSON_FILENAME}")
+    return data
+
+
 def prompt_downsample_selection() -> str | None:
     """Let the user pick a downsampled PLY file from ply/downsample/.
 
@@ -172,14 +191,28 @@ def main() -> None:
 
     rect_result = load_rectangular_results(selected_dir)
     pillars = load_pillar_results(selected_dir)
+    triplane_result = load_triplane_results(selected_dir)
 
-    if rect_result is not None or pillars is not None:
+    has_any = rect_result is not None or pillars is not None or triplane_result is not None
+
+    if has_any:
         ds_path = prompt_downsample_selection()
         if ds_path is not None:
-            if rect_result is not None and pillars is not None:
-                # Both results — combined viewer
+            # Count how many result types exist
+            result_count = sum([
+                rect_result is not None,
+                pillars is not None,
+                triplane_result is not None,
+            ])
+
+            if result_count >= 2:
+                # Multiple results — combined viewer
                 from .visualization.visualization import show_combined_overlay_viewer
-                overlay_data = {"rectangular": rect_result, "pillars": pillars}
+                overlay_data = {
+                    "rectangular": rect_result,
+                    "pillars": pillars,
+                    "triplane": triplane_result,
+                }
                 overlay = ("Downsampled + Combined", ds_path, overlay_data)
                 overlay_viewer_fn = show_combined_overlay_viewer
             elif rect_result is not None:
@@ -187,17 +220,30 @@ def main() -> None:
                 from .visualization.visualization import show_rectangular_overlay_viewer
                 overlay = ("Downsampled + Wireframe", ds_path, rect_result)
                 overlay_viewer_fn = show_rectangular_overlay_viewer
+            elif triplane_result is not None:
+                # Triplane only
+                from .visualization.visualization import show_triplane_overlay_viewer
+                overlay = ("Downsampled + Triplane", ds_path, triplane_result)
+                overlay_viewer_fn = show_triplane_overlay_viewer
             else:
                 # Pillar only — launch_all_viewers defaults to show_overlay_viewer
                 overlay = ("Downsampled + Axes", ds_path, pillars)
 
     from .visualization.visualization import launch_all_viewers
-    launch_all_viewers(targets, overlay=overlay, overlay_viewer_fn=overlay_viewer_fn)
+    launch_all_viewers(
+        targets, overlay=overlay, overlay_viewer_fn=overlay_viewer_fn,
+        save_dir=str(selected_dir),
+    )
 
     # Axis comparison figures (after viewers close)
     if rect_result is not None and pillars is not None:
         from .visualization.axis_comparison import generate_axis_comparison
         generate_axis_comparison(pillars, rect_result, output_dir=str(selected_dir))
+
+    # Triplane comparison figures (after viewers close)
+    if triplane_result is not None:
+        from .visualization.triplane_comparison import generate_triplane_comparison
+        generate_triplane_comparison(triplane_result, output_dir=str(selected_dir))
 
 
 if __name__ == "__main__":
