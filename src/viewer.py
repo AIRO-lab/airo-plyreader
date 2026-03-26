@@ -188,7 +188,7 @@ def main() -> None:
                 overlay = ("Downsampled + Wireframe", ds_path, rect_result)
                 overlay_viewer_fn = show_rectangular_overlay_viewer
             else:
-                # Pillar only
+                # Pillar only — launch_all_viewers defaults to show_overlay_viewer
                 overlay = ("Downsampled + Axes", ds_path, pillars)
 
     from .visualization.visualization import launch_all_viewers
