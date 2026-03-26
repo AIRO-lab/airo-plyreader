@@ -99,7 +99,7 @@ def plot_vector_diagram(
                 ha="center", style="italic")
 
     # Reference axes (light gray)
-    for axis_vec, label in [([1, 0, 0], "X"), ([0, 1, 0], "Y"), ([0, 0, 1], "Z")]:
+    for axis_vec in [[1, 0, 0], [0, 1, 0], [0, 0, 1]]:
         ax.plot([0, axis_vec[0]], [0, axis_vec[1]], [0, axis_vec[2]],
                 color="#CCCCCC", linewidth=0.5, linestyle=":")
 
@@ -202,6 +202,10 @@ def generate_axis_comparison(
         rect_data: Rectangular result dict from rectangular_pca_results.json.
         output_dir: If provided, save PNGs to this directory.
     """
+    if not pillars_data:
+        print("No pillar data available for axis comparison.")
+        return
+
     # Extract axes
     largest_pillar = max(pillars_data, key=lambda p: p.get("num_inlier_points", 0))
     pillar_axis = np.array(largest_pillar["axis"], dtype=np.float64)
