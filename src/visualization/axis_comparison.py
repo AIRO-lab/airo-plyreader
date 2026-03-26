@@ -75,9 +75,9 @@ def plot_vector_diagram(
     # Draw axis arrows
     origin = [0, 0, 0]
     ax.quiver(*origin, *pillar_axis, color="#00FFFF", arrow_length_ratio=0.08,
-              linewidth=2.0, label="Pillar PC1")
+              linewidth=2.0, label="ARA")
     ax.quiver(*origin, *rect_axis, color="#FF0000", arrow_length_ratio=0.08,
-              linewidth=2.0, label="Rectangular PC1")
+              linewidth=2.0, label="Wall")
 
     # Angle arc
     if angle_deg >= 0.1:
@@ -93,7 +93,7 @@ def plot_vector_diagram(
         # Angle label at arc midpoint
         mid = arc_points[len(arc_points) // 2]
         ax.text(mid[0] * 1.4, mid[1] * 1.4, mid[2] * 1.4,
-                f"$\\theta$ = {angle_deg:.1f}°", fontsize=10, ha="center")
+                f"$\\theta$ = {angle_deg:.3f}°", fontsize=10, ha="center")
     else:
         ax.text(0.5, 0.5, 0.5, "axes are coincident", fontsize=10,
                 ha="center", style="italic")
@@ -150,9 +150,9 @@ def plot_unit_sphere(
 
     # Direction points
     ax.scatter(*pillar_axis, color="#00FFFF", s=100, zorder=5,
-               edgecolors="black", linewidths=0.5, label="Pillar PC1")
+               edgecolors="black", linewidths=0.5, label="ARA")
     ax.scatter(*rect_axis, color="#FF0000", s=100, zorder=5,
-               edgecolors="black", linewidths=0.5, label="Rectangular PC1")
+               edgecolors="black", linewidths=0.5, label="Wall")
 
     # Great circle arc
     if angle_deg >= 0.1:
@@ -165,7 +165,7 @@ def plot_unit_sphere(
                 "k--", linewidth=1.0)
         mid = arc_points[len(arc_points) // 2]
         ax.text(mid[0] * 1.3, mid[1] * 1.3, mid[2] * 1.3,
-                f"$\\theta$ = {angle_deg:.1f}°", fontsize=10, ha="center")
+                f"$\\theta$ = {angle_deg:.3f}°", fontsize=10, ha="center")
     else:
         ax.text(pillar_axis[0] * 1.3, pillar_axis[1] * 1.3, pillar_axis[2] * 1.3,
                 "axes are coincident", fontsize=10, ha="center", style="italic")
@@ -216,10 +216,10 @@ def generate_axis_comparison(
 
     # Compute angle
     angle_deg = compute_angle_between_axes(pillar_axis, rect_axis)
-    print(f"\nAxis comparison: Pillar PC1 vs Rectangular PC1")
+    print(f"\nAxis comparison: ARA vs Wall")
     print(f"  Pillar axis:      [{pillar_axis[0]:.4f}, {pillar_axis[1]:.4f}, {pillar_axis[2]:.4f}]")
     print(f"  Rectangular axis: [{rect_axis[0]:.4f}, {rect_axis[1]:.4f}, {rect_axis[2]:.4f}]")
-    print(f"  Angle: {angle_deg:.2f}°")
+    print(f"  Angle: {angle_deg:.3f}°")
 
     # Build save paths
     vec_save = os.path.join(output_dir, "axis_vector_diagram.png") if output_dir else None
