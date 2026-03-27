@@ -190,12 +190,12 @@ def create_triplane_visualization(
         output_points = np.vstack([output_points, wireframe_pts])
         output_colors = np.vstack([output_colors, wireframe_cols])
 
-        # Red Z-axis line from center
+        # Z-axis line from center (zone color)
         axis_length = float(np.max(dimensions)) * 1.5
         z_start = center - np.array([0.0, 0.0, axis_length * 0.5])
         z_end = center + np.array([0.0, 0.0, axis_length * 0.5])
         z_line = np.linspace(z_start, z_end, _POINTS_PER_EDGE)
-        z_colors = np.full((len(z_line), 3), RED_COLOR, dtype=np.uint8)
+        z_colors = np.full((len(z_line), 3), color_uint8, dtype=np.uint8)
 
         output_points = np.vstack([output_points, z_line])
         output_colors = np.vstack([output_colors, z_colors])
@@ -640,7 +640,7 @@ def show_combined_overlay_viewer(
                         radius=0.01, height=axis_length, resolution=20, split=4
                     )
                     cyl.compute_vertex_normals()
-                    cyl.paint_uniform_color([1.0, 0.0, 0.0])
+                    cyl.paint_uniform_color(color)  # zone color
                     cyl.translate(center_np)
                     geometries.append(cyl)
 
@@ -772,7 +772,7 @@ def show_triplane_overlay_viewer(
                     radius=0.01, height=axis_length, resolution=20, split=4
                 )
                 cylinder.compute_vertex_normals()
-                cylinder.paint_uniform_color([1.0, 0.0, 0.0])
+                cylinder.paint_uniform_color(color)  # zone color
                 cylinder.translate(center_np)
                 geometries.append(cylinder)
 
