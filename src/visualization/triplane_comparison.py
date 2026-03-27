@@ -11,7 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
-from .axis_comparison import compute_angle_between_axes, _slerp_arc
+from .axis_comparison import _slerp_arc
 
 
 # Colors matching the triplane visualization
