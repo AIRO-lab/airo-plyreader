@@ -184,7 +184,7 @@ TOP_CLUSTERS_TO_ANALYZE = 5
 # KNN neighbor count for local surface normal estimation
 TRIPLANE_K_NEIGHBORS = 50
 # Visualization square side length (meters)
-TRIPLANE_SQUARE_SIZE = 0.5
+TRIPLANE_SQUARE_SIZE = 1.0
 # Minimum angle (degrees) between any two plane normals to accept as distinct
 TRIPLANE_ANGLE_THRESHOLD = 5.0
 # Maximum random point sampling attempts before giving up

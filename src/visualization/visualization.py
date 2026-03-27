@@ -215,10 +215,11 @@ def create_triplane_visualization(
         output_points = np.vstack([output_points, square_points])
         output_colors = np.vstack([output_colors, square_colors])
 
-        # Normal vector line from center
+        # Normal vector line from center (always Z-axis direction)
         normal_length = TRIPLANE_SQUARE_SIZE * 0.5
+        z_axis = np.array([0.0, 0.0, 1.0])
         normal_start = center
-        normal_end = center + normal_length * normal
+        normal_end = center + normal_length * z_axis
         normal_line = np.linspace(normal_start, normal_end, _PLANE_GRID_SIZE)
         normal_colors = np.full((len(normal_line), 3), color_uint8, dtype=np.uint8)
 
@@ -657,16 +658,10 @@ def show_combined_overlay_viewer(
                 mesh.paint_uniform_color(color)
                 geometries.append(mesh)
 
-                # Normal cylinder
+                # Normal cylinder (always Z-axis direction)
                 center_arr = plane.get("center")
-                normal_arr = plane.get("normal")
-                if center_arr is not None and normal_arr is not None:
+                if center_arr is not None:
                     center_np = np.array(center_arr)
-                    normal_np = np.array(normal_arr)
-                    normal_norm = np.linalg.norm(normal_np)
-                    if normal_norm < 1e-9:
-                        continue
-                    normal_np = normal_np / normal_norm
 
                     cyl_length = 0.3
                     cyl = o3d.geometry.TriangleMesh.create_cylinder(
@@ -674,26 +669,8 @@ def show_combined_overlay_viewer(
                     )
                     cyl.compute_vertex_normals()
                     cyl.paint_uniform_color(color)
-
-                    z_axis = np.array([0.0, 0.0, 1.0])
-                    rot_ax = np.cross(z_axis, normal_np)
-                    rot_ax_len = np.linalg.norm(rot_ax)
-                    dot_val = np.clip(np.dot(z_axis, normal_np), -1.0, 1.0)
-
-                    if rot_ax_len < 1e-6:
-                        if dot_val < 0:
-                            R = o3d.geometry.get_rotation_matrix_from_axis_angle(
-                                np.array([np.pi, 0.0, 0.0])
-                            )
-                            cyl.rotate(R, center=np.array([0.0, 0.0, 0.0]))
-                    else:
-                        angle = np.arccos(dot_val)
-                        R = o3d.geometry.get_rotation_matrix_from_axis_angle(
-                            (rot_ax / rot_ax_len) * angle
-                        )
-                        cyl.rotate(R, center=np.array([0.0, 0.0, 0.0]))
-
-                    cyl.translate(center_np + normal_np * cyl_length / 2)
+                    # Cylinder is already along Z-axis, just translate
+                    cyl.translate(center_np + np.array([0.0, 0.0, cyl_length / 2]))
                     geometries.append(cyl)
 
         overlay_parts = []
@@ -826,16 +803,10 @@ def show_triplane_overlay_viewer(
             mesh.paint_uniform_color(color)
             geometries.append(mesh)
 
-            # Normal direction cylinder
+            # Normal cylinder (always Z-axis direction)
             center = plane.get("center")
-            normal = plane.get("normal")
-            if center is not None and normal is not None:
+            if center is not None:
                 center_np = np.array(center)
-                normal_np = np.array(normal)
-                normal_norm = np.linalg.norm(normal_np)
-                if normal_norm < 1e-9:
-                    continue
-                normal_np = normal_np / normal_norm
 
                 cyl_length = 0.3
                 cylinder = o3d.geometry.TriangleMesh.create_cylinder(
@@ -843,29 +814,8 @@ def show_triplane_overlay_viewer(
                 )
                 cylinder.compute_vertex_normals()
                 cylinder.paint_uniform_color(color)
-
-                # Rotate from Z-axis to normal direction
-                z_axis = np.array([0.0, 0.0, 1.0])
-                rot_axis = np.cross(z_axis, normal_np)
-                rot_axis_len = np.linalg.norm(rot_axis)
-                dot = np.clip(np.dot(z_axis, normal_np), -1.0, 1.0)
-
-                if rot_axis_len < 1e-6:
-                    if dot < 0:
-                        R = o3d.geometry.get_rotation_matrix_from_axis_angle(
-                            np.array([np.pi, 0.0, 0.0])
-                        )
-                        cylinder.rotate(R, center=np.array([0.0, 0.0, 0.0]))
-                else:
-                    angle = np.arccos(dot)
-                    rot_axis_normalized = rot_axis / rot_axis_len
-                    R = o3d.geometry.get_rotation_matrix_from_axis_angle(
-                        rot_axis_normalized * angle
-                    )
-                    cylinder.rotate(R, center=np.array([0.0, 0.0, 0.0]))
-
-                # Translate to center + offset along normal
-                cylinder.translate(center_np + normal_np * cyl_length / 2)
+                # Cylinder is already along Z-axis, just translate
+                cylinder.translate(center_np + np.array([0.0, 0.0, cyl_length / 2]))
                 geometries.append(cylinder)
 
         print(f"[Viewer] '{title}': {len(pcd.points):,} points, {len(planes)} planes")

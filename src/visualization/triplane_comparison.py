@@ -1,7 +1,8 @@
 """
 Academic-style triplane comparison figures for PCA analysis results.
 
-Generates two Matplotlib figures comparing the 3 detected plane normals:
+Generates two Matplotlib figures comparing the 3 detected plane normals
+and optionally the rectangular PCA principal axis:
 1. 3D vector diagram with angle arcs between all pairs
 2. Unit sphere with direction points and great circle arcs
 """
@@ -22,16 +23,18 @@ _PLANE_LABELS = ["Plane 0 (Blue)", "Plane 1 (Magenta)", "Plane 2 (Green)"]
 def plot_triplane_vector_diagram(
     normals: list[np.ndarray],
     angles: dict[str, float],
+    rect_axis: np.ndarray | None = None,
     save_path: str | None = None,
 ) -> None:
     """Generate 3D vector diagram comparing three plane normals.
 
     Draws three unit vectors as arrows from the origin with angle
-    arcs between each pair. Academic paper figure style.
+    arcs between each pair. Optionally includes rectangular PCA axis.
 
     Args:
         normals: List of 3 unit normal vectors (3,).
         angles: Dict of pairwise angles (e.g. {'plane_0_1': 45.2, ...}).
+        rect_axis: Optional rectangular PCA PC1 axis (red).
         save_path: If provided, save PNG at this path (300 DPI).
     """
     fig = plt.figure(figsize=(7, 7))
@@ -39,12 +42,17 @@ def plot_triplane_vector_diagram(
 
     origin = [0, 0, 0]
 
+    # Draw rectangular PCA axis if provided
+    if rect_axis is not None:
+        ax.quiver(*origin, *rect_axis, color="#FF0000", arrow_length_ratio=0.08,
+                  linewidth=2.5, label="Rectangular PC1 (Red)")
+
     # Draw normal arrows
     for i, (normal, color, label) in enumerate(zip(normals, _PLANE_COLORS, _PLANE_LABELS)):
         ax.quiver(*origin, *normal, color=color, arrow_length_ratio=0.08,
                   linewidth=2.0, label=label)
 
-    # Draw angle arcs between each pair
+    # Draw angle arcs between each pair of normals
     pairs = [(0, 1), (0, 2), (1, 2)]
     for i, j in pairs:
         key = f"plane_{i}_{j}"
@@ -69,7 +77,7 @@ def plot_triplane_vector_diagram(
         # Angle label at arc midpoint
         mid = arc_points[len(arc_points) // 2]
         ax.text(mid[0] * 1.5, mid[1] * 1.5, mid[2] * 1.5,
-                f"{angle_deg:.1f}°", fontsize=8, ha="center")
+                f"{angle_deg:.1f}\u00b0", fontsize=8, ha="center")
 
     # Reference axes (light gray)
     for axis_vec in [[1, 0, 0], [0, 1, 0], [0, 0, 1]]:
@@ -96,16 +104,18 @@ def plot_triplane_vector_diagram(
 def plot_triplane_unit_sphere(
     normals: list[np.ndarray],
     angles: dict[str, float],
+    rect_axis: np.ndarray | None = None,
     save_path: str | None = None,
 ) -> None:
     """Generate unit sphere visualization comparing three plane normals.
 
     Plots direction points on a wireframe unit sphere with great
-    circle arcs connecting each pair.
+    circle arcs connecting each pair. Optionally includes rectangular axis.
 
     Args:
         normals: List of 3 unit normal vectors (3,).
         angles: Dict of pairwise angles.
+        rect_axis: Optional rectangular PCA PC1 axis (red).
         save_path: If provided, save PNG at this path (300 DPI).
     """
     fig = plt.figure(figsize=(7, 7))
@@ -118,6 +128,12 @@ def plot_triplane_unit_sphere(
     y = np.outer(np.sin(u), np.sin(v))
     z = np.outer(np.ones_like(u), np.cos(v))
     ax.plot_wireframe(x, y, z, color="#AAAAAA", alpha=0.4, linewidth=0.5)
+
+    # Rectangular PCA axis point if provided
+    if rect_axis is not None:
+        ax.scatter(*rect_axis, color="#FF0000", s=120, zorder=6,
+                   edgecolors="black", linewidths=0.5, marker="D",
+                   label="Rectangular PC1 (Red)")
 
     # Direction points
     for normal, color, label in zip(normals, _PLANE_COLORS, _PLANE_LABELS):
@@ -146,7 +162,7 @@ def plot_triplane_unit_sphere(
 
         mid = arc_points[len(arc_points) // 2]
         ax.text(mid[0] * 1.3, mid[1] * 1.3, mid[2] * 1.3,
-                f"{angle_deg:.1f}°", fontsize=8, ha="center")
+                f"{angle_deg:.1f}\u00b0", fontsize=8, ha="center")
 
     ax.set_xlim([-1.2, 1.2])
     ax.set_ylim([-1.2, 1.2])
@@ -168,6 +184,7 @@ def plot_triplane_unit_sphere(
 def generate_triplane_comparison(
     triplane_data: dict,
     output_dir: str | None = None,
+    rect_data: dict | None = None,
 ) -> None:
     """Generate triplane comparison figures from JSON result data.
 
@@ -176,6 +193,8 @@ def generate_triplane_comparison(
     Args:
         triplane_data: Triplane result dict from triplane_results.json.
         output_dir: If provided, save PNGs to this directory.
+        rect_data: Optional rectangular PCA result dict. If provided,
+            its PC1 axis is drawn in red for comparison.
     """
     planes = triplane_data.get("planes", [])
     if len(planes) < 3:
@@ -194,17 +213,29 @@ def generate_triplane_comparison(
     # Get angles from JSON
     angles = triplane_data.get("angles_between_planes", {})
 
+    # Extract rectangular PC1 axis if available
+    rect_axis = None
+    if rect_data is not None:
+        axes = rect_data.get("axes")
+        if axes is not None and len(axes) > 0:
+            rect_axis = np.array(axes[0], dtype=np.float64)
+            rect_norm = np.linalg.norm(rect_axis)
+            if rect_norm > 1e-9:
+                rect_axis = rect_axis / rect_norm
+
     # Print summary
     print(f"\nTriplane normal comparison:")
     color_names = ["Blue", "Magenta", "Green"]
     for i, (normal, name) in enumerate(zip(normals, color_names)):
         print(f"  {name}: [{normal[0]:.4f}, {normal[1]:.4f}, {normal[2]:.4f}]")
     for key, val in angles.items():
-        print(f"  {key}: {val:.3f}°")
+        print(f"  {key}: {val:.3f}\u00b0")
+    if rect_axis is not None:
+        print(f"  Rectangular PC1: [{rect_axis[0]:.4f}, {rect_axis[1]:.4f}, {rect_axis[2]:.4f}]")
 
     # Build save paths
     vec_save = os.path.join(output_dir, "triplane_vector_diagram.png") if output_dir else None
     sphere_save = os.path.join(output_dir, "triplane_unit_sphere.png") if output_dir else None
 
-    plot_triplane_vector_diagram(normals, angles, save_path=vec_save)
-    plot_triplane_unit_sphere(normals, angles, save_path=sphere_save)
+    plot_triplane_vector_diagram(normals, angles, rect_axis=rect_axis, save_path=vec_save)
+    plot_triplane_unit_sphere(normals, angles, rect_axis=rect_axis, save_path=sphere_save)

@@ -243,7 +243,7 @@ def main() -> None:
     # Triplane comparison figures (after viewers close)
     if triplane_result is not None:
         from .visualization.triplane_comparison import generate_triplane_comparison
-        generate_triplane_comparison(triplane_result, output_dir=str(selected_dir))
+        generate_triplane_comparison(triplane_result, output_dir=str(selected_dir), rect_data=rect_result)
 
 
 if __name__ == "__main__":
