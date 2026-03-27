@@ -12,7 +12,6 @@ from typing import List, Tuple, Dict, Any
 from ..config import (
     GRAY_COLOR, RED_COLOR, CYAN_COLOR,
     TRIPLANE_COLOR_BLUE, TRIPLANE_COLOR_MAGENTA, TRIPLANE_COLOR_GREEN,
-    TRIPLANE_SQUARE_SIZE,
 )
 
 
@@ -152,81 +151,56 @@ def create_rectangular_visualization(
     return output_points, output_colors
 
 
-# Grid density for triplane square visualization
-_PLANE_GRID_SIZE = 30
-
-
 def create_triplane_visualization(
     points: np.ndarray,
     colors: np.ndarray,
     triplane_result: Dict[str, Any],
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Create visualization for triplane PCA result.
+    """Create visualization for triplane PCA v2 result.
 
-    Colors original points gray, then draws 3 colored squares and
-    their normal vectors as point-based lines.
-
-    Args:
-        points: Original point cloud (N, 3) NumPy array.
-        colors: Original colors (N, 3) NumPy uint8 array.
-        triplane_result: Dict from analyze_triplane_pca().
-
-    Returns:
-        Tuple of (output_points, output_colors).
+    Colors original points gray, draws 3 colored wireframe boxes
+    and red Z-axis lines from each box center.
     """
     print("Creating triplane PCA visualization...")
     start_time = time.time()
 
-    # All original points in gray
     output_points = points.copy()
     output_colors = np.full_like(colors, GRAY_COLOR)
 
-    plane_colors_rgb = [
+    zone_colors_rgb = [
         TRIPLANE_COLOR_BLUE,
         TRIPLANE_COLOR_MAGENTA,
         TRIPLANE_COLOR_GREEN,
     ]
-    plane_labels = ["blue", "magenta", "green"]
+    zone_labels = ["blue", "magenta", "green"]
 
-    for i, plane in enumerate(triplane_result['planes']):
-        center = np.array(plane['center'])
-        axis1 = np.array(plane['axis1'])
-        axis2 = np.array(plane['axis2'])
-        normal = np.array(plane['normal'])
+    for i, zone in enumerate(triplane_result['zones']):
+        vertices = np.array(zone['vertices'])
+        center = np.array(zone['center'])
+        dimensions = np.array(zone['dimensions'])
+        color_uint8 = np.array([int(c * 255) for c in zone_colors_rgb[i]], dtype=np.uint8)
 
-        # Generate grid points on the square
-        half = TRIPLANE_SQUARE_SIZE / 2.0
-        u = np.linspace(-half, half, _PLANE_GRID_SIZE)
-        v = np.linspace(-half, half, _PLANE_GRID_SIZE)
-        uu, vv = np.meshgrid(u, v)
-        uu_flat = uu.flatten()
-        vv_flat = vv.flatten()
+        # Wireframe edges
+        edge_points = []
+        for a, b in _BOX_EDGES:
+            edge_points.append(np.linspace(vertices[a], vertices[b], _POINTS_PER_EDGE))
+        wireframe_pts = np.vstack(edge_points)
+        wireframe_cols = np.full((len(wireframe_pts), 3), color_uint8, dtype=np.uint8)
 
-        square_points = (
-            center[np.newaxis, :]
-            + uu_flat[:, np.newaxis] * axis1[np.newaxis, :]
-            + vv_flat[:, np.newaxis] * axis2[np.newaxis, :]
-        )
+        output_points = np.vstack([output_points, wireframe_pts])
+        output_colors = np.vstack([output_colors, wireframe_cols])
 
-        # Color (convert 0-1 float to 0-255 uint8)
-        color_uint8 = np.array([int(c * 255) for c in plane_colors_rgb[i]], dtype=np.uint8)
-        square_colors = np.full((len(square_points), 3), color_uint8, dtype=np.uint8)
+        # Red Z-axis line from center
+        axis_length = float(np.max(dimensions)) * 1.5
+        z_start = center - np.array([0.0, 0.0, axis_length * 0.5])
+        z_end = center + np.array([0.0, 0.0, axis_length * 0.5])
+        z_line = np.linspace(z_start, z_end, _POINTS_PER_EDGE)
+        z_colors = np.full((len(z_line), 3), RED_COLOR, dtype=np.uint8)
 
-        output_points = np.vstack([output_points, square_points])
-        output_colors = np.vstack([output_colors, square_colors])
+        output_points = np.vstack([output_points, z_line])
+        output_colors = np.vstack([output_colors, z_colors])
 
-        # Normal vector line from center (always Z-axis direction)
-        normal_length = TRIPLANE_SQUARE_SIZE * 0.5
-        z_axis = np.array([0.0, 0.0, 1.0])
-        normal_start = center
-        normal_end = center + normal_length * z_axis
-        normal_line = np.linspace(normal_start, normal_end, _PLANE_GRID_SIZE)
-        normal_colors = np.full((len(normal_line), 3), color_uint8, dtype=np.uint8)
-
-        output_points = np.vstack([output_points, normal_line])
-        output_colors = np.vstack([output_colors, normal_colors])
-
-        print(f"    Plane {i} ({plane_labels[i]}): {len(square_points)} grid + {len(normal_line)} normal points")
+        print(f"    Zone {i} ({zone_labels[i]}): {len(wireframe_pts)} wireframe + {len(z_line)} axis points")
 
     viz_time = time.time() - start_time
     print(f"Created triplane visualization with {len(output_points):,} points in {viz_time:.2f}s")
@@ -635,42 +609,39 @@ def show_combined_overlay_viewer(
                 cylinder.translate(center)
                 geometries.append(cylinder)
 
-        # --- Triplane overlay: colored square meshes + normal cylinders ---
+        # --- Triplane overlay: colored wireframe boxes + red Z-axis ---
         triplane_data = overlay_data.get("triplane")
         if triplane_data is not None:
-            plane_colors = [
+            zone_colors = [
                 [0.0, 0.0, 1.0],   # blue
                 [1.0, 0.0, 1.0],   # magenta
                 [0.0, 1.0, 0.0],   # green
             ]
-            tri_planes = triplane_data.get("planes", [])
-            for i, plane in enumerate(tri_planes):
-                color = plane_colors[i % len(plane_colors)]
-                verts = plane.get("square_vertices")
-                if verts is None or len(verts) < 4:
+            zones = triplane_data.get("zones", [])
+            for i, zone in enumerate(zones):
+                color = zone_colors[i % len(zone_colors)]
+                vertices = zone.get("vertices")
+                if vertices is None or len(vertices) < 8:
                     continue
-                v = np.array(verts)
+                verts = np.array(vertices)
 
-                mesh = o3d.geometry.TriangleMesh()
-                mesh.vertices = o3d.utility.Vector3dVector(v)
-                mesh.triangles = o3d.utility.Vector3iVector([[0, 1, 2], [0, 2, 3]])
-                mesh.compute_vertex_normals()
-                mesh.paint_uniform_color(color)
-                geometries.append(mesh)
+                line_set = o3d.geometry.LineSet()
+                line_set.points = o3d.utility.Vector3dVector(verts)
+                line_set.lines = o3d.utility.Vector2iVector(list(_BOX_EDGES))
+                line_set.colors = o3d.utility.Vector3dVector([color] * len(_BOX_EDGES))
+                geometries.append(line_set)
 
-                # Normal cylinder (always Z-axis direction)
-                center_arr = plane.get("center")
-                if center_arr is not None:
+                center_arr = zone.get("center")
+                dimensions_arr = zone.get("dimensions")
+                if center_arr is not None and dimensions_arr is not None:
                     center_np = np.array(center_arr)
-
-                    cyl_length = 0.3
+                    axis_length = float(np.max(dimensions_arr)) * 1.5
                     cyl = o3d.geometry.TriangleMesh.create_cylinder(
-                        radius=0.008, height=cyl_length, resolution=20, split=4
+                        radius=0.01, height=axis_length, resolution=20, split=4
                     )
                     cyl.compute_vertex_normals()
-                    cyl.paint_uniform_color(color)
-                    # Cylinder is already along Z-axis, just translate
-                    cyl.translate(center_np + np.array([0.0, 0.0, cyl_length / 2]))
+                    cyl.paint_uniform_color([1.0, 0.0, 0.0])
+                    cyl.translate(center_np)
                     geometries.append(cyl)
 
         overlay_parts = []
@@ -679,7 +650,7 @@ def show_combined_overlay_viewer(
         if pillars_data:
             overlay_parts.append(f"{len(pillars_data)} axes")
         if triplane_data is not None:
-            overlay_parts.append(f"{len(triplane_data.get('planes', []))} planes")
+            overlay_parts.append(f"{len(triplane_data.get('zones', []))} zones")
         print(f"[Viewer] '{title}': {len(pcd.points):,} points, {' + '.join(overlay_parts)}")
         _show_with_capture(geometries, title, 960, 540, left, top, save_dir)
     except Exception as e:
@@ -758,18 +729,9 @@ def show_triplane_overlay_viewer(
     top: int,
     save_dir: str | None = None,
 ) -> None:
-    """Open a PLY with triplane square overlay in an Open3D viewer.
+    """Open a PLY with triplane wireframe overlay in an Open3D viewer.
 
-    Designed to run as a multiprocessing.Process target.
-    Renders 3 colored squares as TriangleMesh and normal direction cylinders.
-
-    Args:
-        ply_path: Path to the visualization PLY file.
-        triplane_data: Triplane result dict from JSON (has 'planes').
-        title: Window title.
-        left: Window X position.
-        top: Window Y position.
-        save_dir: Directory for screenshot captures.
+    Renders 3 colored wireframe boxes and red Z-axis cylinders.
     """
     try:
         import open3d as o3d
@@ -781,44 +743,40 @@ def show_triplane_overlay_viewer(
 
         geometries = [pcd]
 
-        plane_colors = [
+        zone_colors = [
             [0.0, 0.0, 1.0],   # blue
             [1.0, 0.0, 1.0],   # magenta
             [0.0, 1.0, 0.0],   # green
         ]
 
-        planes = triplane_data.get("planes", [])
-        for i, plane in enumerate(planes):
-            color = plane_colors[i % len(plane_colors)]
-            verts = plane.get("square_vertices")
-            if verts is None or len(verts) < 4:
+        zones = triplane_data.get("zones", [])
+        for i, zone in enumerate(zones):
+            color = zone_colors[i % len(zone_colors)]
+            vertices = zone.get("vertices")
+            if vertices is None or len(vertices) < 8:
                 continue
-            v = np.array(verts)
+            verts = np.array(vertices)
 
-            # TriangleMesh: 4 vertices, 2 triangles
-            mesh = o3d.geometry.TriangleMesh()
-            mesh.vertices = o3d.utility.Vector3dVector(v)
-            mesh.triangles = o3d.utility.Vector3iVector([[0, 1, 2], [0, 2, 3]])
-            mesh.compute_vertex_normals()
-            mesh.paint_uniform_color(color)
-            geometries.append(mesh)
+            line_set = o3d.geometry.LineSet()
+            line_set.points = o3d.utility.Vector3dVector(verts)
+            line_set.lines = o3d.utility.Vector2iVector(list(_BOX_EDGES))
+            line_set.colors = o3d.utility.Vector3dVector([color] * len(_BOX_EDGES))
+            geometries.append(line_set)
 
-            # Normal cylinder (always Z-axis direction)
-            center = plane.get("center")
-            if center is not None:
+            center = zone.get("center")
+            dimensions = zone.get("dimensions")
+            if center is not None and dimensions is not None:
                 center_np = np.array(center)
-
-                cyl_length = 0.3
+                axis_length = float(np.max(dimensions)) * 1.5
                 cylinder = o3d.geometry.TriangleMesh.create_cylinder(
-                    radius=0.008, height=cyl_length, resolution=20, split=4
+                    radius=0.01, height=axis_length, resolution=20, split=4
                 )
                 cylinder.compute_vertex_normals()
-                cylinder.paint_uniform_color(color)
-                # Cylinder is already along Z-axis, just translate
-                cylinder.translate(center_np + np.array([0.0, 0.0, cyl_length / 2]))
+                cylinder.paint_uniform_color([1.0, 0.0, 0.0])
+                cylinder.translate(center_np)
                 geometries.append(cylinder)
 
-        print(f"[Viewer] '{title}': {len(pcd.points):,} points, {len(planes)} planes")
+        print(f"[Viewer] '{title}': {len(pcd.points):,} points, {len(zones)} zones")
         _show_with_capture(geometries, title, 960, 540, left, top, save_dir)
     except Exception as e:
         print(f"[Viewer] '{title}' error: {e}")
