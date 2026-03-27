@@ -21,7 +21,6 @@ from .config import (
     PLY_DIR, DOWNSAMPLE_DIR, ENABLE_INTERMEDIATE_SAVES,
     GPU_DEVICE_ID, DOWNSAMPLING_ENABLED, DOWNSAMPLING_VOXEL_SIZE, ENABLE_VISUALIZATION,
     PILLAR_JSON_FILENAME, RECTANGULAR_JSON_FILENAME, TRIPLANE_JSON_FILENAME,
-    TRIPLANE_SQUARE_SIZE, TRIPLANE_ANGLE_THRESHOLD,
     create_run_output_dir,
 )
 from .core.gpu import PointCloudGPU
@@ -32,7 +31,7 @@ from .preprocessing.color_segmentation import segment_by_color
 from .preprocessing.roi_selection import select_roi_gui, crop_to_roi, select_z_roi_gui, crop_to_z_roi
 from .preprocessing.hsv_analysis import analyze_hsv_gui
 from .analysis.clustering import cluster_colored_points
-from .analysis.pca_analysis import detect_pillars_with_pca, analyze_rectangular_pca, analyze_triplane_pca
+from .analysis.pca_analysis import detect_pillars_with_pca, analyze_rectangular_pca
 from .visualization.visualization import (
     create_visualization_output, create_clustering_visualization,
     launch_all_viewers, create_rectangular_visualization,
@@ -123,7 +122,7 @@ def prompt_pca_method() -> str:
     print("  [1] cylinder    - Cylindrical shape detection")
     print("  [2] traditional - Traditional PCA (PC1 = reference axis)")
     print("  [3] rectangular - Rectangular box detection (ROI-based)")
-    print("  [4] triplane    - Multi-plane detection (3 planes via KNN+PCA)")
+    print("  [4] triplane    - 3-zone rectangular PCA (Z-region based)")
     print()
 
     while True:
@@ -367,52 +366,55 @@ def save_rectangular_results_json(
 
 
 def save_triplane_results_json(
-    triplane_result: Dict[str, Any],
+    zone_results: list[Dict[str, Any]],
+    z_rois: list[tuple],
     source_file: str,
 ) -> str:
-    """Save triplane PCA results to JSON in the run output directory.
-
-    Args:
-        triplane_result: Dict from analyze_triplane_pca().
-        source_file: Original PLY filename.
-
-    Returns:
-        Path to the written JSON file.
-    """
-    planes_json = []
+    """Save triplane PCA v2 results to JSON in the run output directory."""
     color_names = ["blue", "magenta", "green"]
-    for i, plane in enumerate(triplane_result['planes']):
-        planes_json.append({
-            "plane_id": i,
+    zones_json = []
+    for i, (result, z_roi) in enumerate(zip(zone_results, z_rois)):
+        h_min, h_max, z_min, z_max, axis_name = z_roi
+        zones_json.append({
+            "zone_id": i,
             "color": color_names[i],
-            "center": plane['center'],
-            "normal": plane['normal'],
-            "axis1": plane['axis1'],
-            "axis2": plane['axis2'],
-            "flatness": plane['flatness'],
-            "eigenvalue_ratios": plane['eigenvalue_ratios'],
-            "num_neighbors": plane['num_neighbors'],
-            "square_vertices": plane['square_vertices'],
+            "z_roi": {
+                "h_min": float(h_min), "h_max": float(h_max),
+                "z_min": float(z_min), "z_max": float(z_max),
+                "axis": axis_name,
+            },
+            "center": result["center"].tolist(),
+            "axes": result["axes"].tolist(),
+            "dimensions": result["dimensions"].tolist(),
+            "vertices": result["vertices"].tolist(),
+            "eigenvalue_ratios": result["eigenvalue_ratios"].tolist(),
+            "point_count": result["point_count"],
         })
 
-    result = {
-        "version": "1.0",
+    angles = {}
+    for i in range(3):
+        for j in range(i + 1, 3):
+            pc1_i = np.array(zone_results[i]["axes"][0])
+            pc1_j = np.array(zone_results[j]["axes"][0])
+            pc1_i = pc1_i / np.linalg.norm(pc1_i)
+            pc1_j = pc1_j / np.linalg.norm(pc1_j)
+            dot = abs(float(np.dot(pc1_i, pc1_j)))
+            angle = float(np.degrees(np.arccos(np.clip(dot, 0.0, 1.0))))
+            angles[f"zone_{i}_{j}"] = round(angle, 3)
+
+    output = {
+        "version": "2.0",
         "source_file": Path(source_file).name,
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "analysis_method": triplane_result['analysis_method'],
-        "parameters": {
-            "k_neighbors": triplane_result['planes'][0]['num_neighbors'],
-            "square_size": TRIPLANE_SQUARE_SIZE,
-            "angle_threshold": TRIPLANE_ANGLE_THRESHOLD,
-        },
-        "planes": planes_json,
-        "angles_between_planes": triplane_result['angles'],
-        "point_count": triplane_result['point_count'],
+        "analysis_method": "triplane_PCA",
+        "zones": zones_json,
+        "angles_between_zones": angles,
+        "point_count_total": sum(r["point_count"] for r in zone_results),
     }
 
     json_path = os.path.join(config._run_dir, TRIPLANE_JSON_FILENAME)
     with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(result, f, indent=2, ensure_ascii=False)
+        json.dump(output, f, indent=2, ensure_ascii=False)
 
     print(f"Triplane PCA results saved to: {json_path}")
     return json_path
@@ -560,34 +562,53 @@ def main() -> None:
                 )
             return
 
-        # Triplane PCA: separate pipeline branch
+        # Triplane PCA: 3-zone rectangular PCA branch
         if pca_method == 'triplane':
-            print("=" * 60)
-            print("Triplane PCA Analysis")
-            print("=" * 60)
-            triplane_result = analyze_triplane_pca(cloud.points)
+            color_names = ["Blue", "Magenta", "Green"]
+            zone_results = []
+            z_rois = []
 
-            if triplane_result is None:
-                print("Triplane PCA failed — no result.")
-                total_time = time.time() - overall_start_time
-                print(f"Total processing time: {total_time:.2f} seconds")
-                return
+            for zone_idx in range(3):
+                print("=" * 60)
+                print(f"Z Region {zone_idx + 1}/3 ({color_names[zone_idx]})")
+                print("=" * 60)
 
-            # Print summary
-            print(f"\nTriplane PCA Result:")
-            for i, plane in enumerate(triplane_result['planes']):
-                color_names = ["blue", "magenta", "green"]
-                print(f"  Plane {i} ({color_names[i]}):")
-                c = plane['center']
-                n = plane['normal']
-                print(f"    Center: ({c[0]:.3f}, {c[1]:.3f}, {c[2]:.3f})")
-                print(f"    Normal: ({n[0]:.3f}, {n[1]:.3f}, {n[2]:.3f})")
-                print(f"    Flatness: {plane['flatness']:.4f}")
-            print(f"  Angles: {triplane_result['angles']}")
-            print(f"  Points: {triplane_result['point_count']:,}")
+                z_roi = select_z_roi_gui(cloud)
+                if z_roi is None:
+                    print(f"Z region {zone_idx + 1} cancelled.")
+                    total_time = time.time() - overall_start_time
+                    print(f"Total processing time: {total_time:.2f} seconds")
+                    return
+
+                h_min, h_max, z_min, z_max, axis_name = z_roi
+                zone_cloud = crop_to_z_roi(cloud, h_min, h_max, z_min, z_max, axis_name)
+
+                print(f"  Analyzing zone {zone_idx + 1} ({len(zone_cloud):,} points)...")
+                rect_result = analyze_rectangular_pca(zone_cloud.points)
+
+                if rect_result is None:
+                    print(f"Rectangular PCA failed for zone {zone_idx + 1}.")
+                    total_time = time.time() - overall_start_time
+                    print(f"Total processing time: {total_time:.2f} seconds")
+                    return
+
+                zone_results.append(rect_result)
+                z_rois.append(z_roi)
+
+                center = rect_result['center']
+                dims = rect_result['dimensions']
+                ev = rect_result['eigenvalue_ratios']
+                print(f"  Zone {zone_idx + 1} ({color_names[zone_idx]}):")
+                print(f"    Center: ({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f})")
+                print(f"    Dimensions: {dims[0]:.3f} x {dims[1]:.3f} x {dims[2]:.3f} m")
+                print(f"    Eigenvalues: [{ev[0]:.3f}, {ev[1]:.3f}, {ev[2]:.3f}]")
+                print(f"    Points: {rect_result['point_count']:,}")
 
             # Save JSON
-            save_triplane_results_json(triplane_result, input_ply_path)
+            save_triplane_results_json(zone_results, z_rois, input_ply_path)
+
+            # Build triplane_result dict for visualization
+            triplane_result = {"zones": zone_results}
 
             # Create visualization and save PLY
             pts_cpu, cols_cpu = cloud.to_cpu()
@@ -595,6 +616,10 @@ def main() -> None:
                 pts_cpu, cols_cpu, triplane_result
             )
             save_ply_file_open3d(config.OUTPUT_PLY_PATH, output_points, output_colors)
+
+            # Free inlier_points (wireframe-only visualization)
+            for result in zone_results:
+                result.pop('inlier_points', None)
 
             total_time = time.time() - overall_start_time
             print(f"Total processing time: {total_time:.2f} seconds")
