@@ -16,7 +16,7 @@ from .axis_comparison import _slerp_arc, compute_angle_between_axes
 
 
 _ZONE_COLORS = ["#0000FF", "#FF00FF", "#00FF00"]
-_ZONE_LABELS = ["Zone 0 (Blue)", "Zone 1 (Magenta)", "Zone 2 (Green)"]
+_ZONE_LABELS = ["Zone 0", "Zone 1", "Zone 2"]
 _COLOR_NAMES = ["blue", "magenta", "green"]
 
 
@@ -34,7 +34,7 @@ def plot_triplane_vector_diagram(
 
     if rect_axis is not None:
         ax.quiver(*origin, *rect_axis, color="#FF0000", arrow_length_ratio=0.08,
-                  linewidth=2.5, label="Rectangular PC1 (Red)")
+                  linewidth=2.5, label="Wall")
 
     for i, (axis, color, label) in enumerate(zip(pc1_axes, _ZONE_COLORS, _ZONE_LABELS)):
         ax.quiver(*origin, *axis, color=color, arrow_length_ratio=0.08,
@@ -98,7 +98,7 @@ def plot_triplane_unit_sphere(
     if rect_axis is not None:
         ax.scatter(*rect_axis, color="#FF0000", s=120, zorder=6,
                    edgecolors="black", linewidths=0.5, marker="D",
-                   label="Rectangular PC1 (Red)")
+                   label="Wall")
 
     for axis, color, label in zip(pc1_axes, _ZONE_COLORS, _ZONE_LABELS):
         ax.scatter(*axis, color=color, s=100, zorder=5,
@@ -150,7 +150,7 @@ def _plot_zone_vs_rect_vector(
     label = _ZONE_LABELS[zone_idx]
 
     ax.quiver(*origin, *rect_axis, color="#FF0000", arrow_length_ratio=0.08,
-              linewidth=2.5, label="Rectangular PC1 (Red)")
+              linewidth=2.5, label="Wall")
     ax.quiver(*origin, *zone_axis, color=color, arrow_length_ratio=0.08,
               linewidth=2.0, label=label)
 
@@ -205,7 +205,7 @@ def _plot_zone_vs_rect_sphere(
 
     ax.scatter(*rect_axis, color="#FF0000", s=120, zorder=6,
                edgecolors="black", linewidths=0.5, marker="D",
-               label="Rectangular PC1 (Red)")
+               label="Wall")
     ax.scatter(*zone_axis, color=color, s=100, zorder=5,
                edgecolors="black", linewidths=0.5, label=label)
 
@@ -288,7 +288,7 @@ def generate_triplane_comparison(
     for key, val in angles.items():
         print(f"  {key}: {val:.3f}\u00b0")
     if rect_axis is not None:
-        print(f"  Rectangular PC1: [{rect_axis[0]:.4f}, {rect_axis[1]:.4f}, {rect_axis[2]:.4f}]")
+        print(f"  Wall: [{rect_axis[0]:.4f}, {rect_axis[1]:.4f}, {rect_axis[2]:.4f}]")
 
     # --- Combined figures (all 3 zones) ---
     vec_save = os.path.join(output_dir, "triplane_vector_diagram.png") if output_dir else None
