@@ -391,14 +391,19 @@ def save_triplane_results_json(
             "point_count": result["point_count"],
         })
 
+    # Select the principal axis closest to Z for each zone
+    def _pick_z_axis(axes):
+        """Pick the principal component with the largest |Z| component."""
+        z_abs = [abs(float(axes[k][2])) for k in range(3)]
+        idx = z_abs.index(max(z_abs))
+        ax = np.array(axes[idx])
+        return ax / np.linalg.norm(ax)
+
     angles = {}
+    z_axes = [_pick_z_axis(r["axes"]) for r in zone_results]
     for i in range(3):
         for j in range(i + 1, 3):
-            pc1_i = np.array(zone_results[i]["axes"][0])
-            pc1_j = np.array(zone_results[j]["axes"][0])
-            pc1_i = pc1_i / np.linalg.norm(pc1_i)
-            pc1_j = pc1_j / np.linalg.norm(pc1_j)
-            dot = abs(float(np.dot(pc1_i, pc1_j)))
+            dot = abs(float(np.dot(z_axes[i], z_axes[j])))
             angle = float(np.degrees(np.arccos(np.clip(dot, 0.0, 1.0))))
             angles[f"zone_{i}_{j}"] = round(angle, 3)
 

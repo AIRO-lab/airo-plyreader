@@ -144,17 +144,21 @@ def generate_triplane_comparison(
         print("Triplane comparison: need 3 zones, skipping.")
         return
 
-    pc1_axes = []
+    # Select the principal axis closest to Z for each zone
+    z_axes = []
     for zone in zones[:3]:
         axes = zone.get("axes")
-        if axes is None or len(axes) < 1:
+        if axes is None or len(axes) < 3:
             print("Triplane comparison: missing axes data, skipping.")
             return
-        pc1 = np.array(axes[0], dtype=np.float64)
-        norm = np.linalg.norm(pc1)
+        z_abs = [abs(float(axes[k][2])) for k in range(3)]
+        idx = z_abs.index(max(z_abs))
+        ax = np.array(axes[idx], dtype=np.float64)
+        norm = np.linalg.norm(ax)
         if norm > 1e-9:
-            pc1 = pc1 / norm
-        pc1_axes.append(pc1)
+            ax = ax / norm
+        z_axes.append(ax)
+    pc1_axes = z_axes  # renamed for compatibility with plot functions
 
     angles = triplane_data.get("angles_between_zones", {})
 
@@ -167,7 +171,7 @@ def generate_triplane_comparison(
             if r_norm > 1e-9:
                 rect_axis = rect_axis / r_norm
 
-    print(f"\nTriplane PC1 comparison:")
+    print(f"\nTriplane Z-axis comparison:")
     color_names = ["Blue", "Magenta", "Green"]
     for i, (pc1, name) in enumerate(zip(pc1_axes, color_names)):
         print(f"  {name}: [{pc1[0]:.4f}, {pc1[1]:.4f}, {pc1[2]:.4f}]")
