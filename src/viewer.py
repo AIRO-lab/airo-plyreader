@@ -96,10 +96,10 @@ def load_rectangular_results(run_dir: Path) -> dict | None:
 
 
 def load_triplane_results(run_dir: Path) -> dict | None:
-    """Load triplane_results.json from a run directory if it exists.
+    """Load triplane_results.json (v2) from a run directory if it exists.
 
     Returns:
-        Triplane result dict, or None if JSON not found.
+        Triplane result dict with 'zones' key, or None if not found or v1.
     """
     from .config import TRIPLANE_JSON_FILENAME
     json_path = run_dir / TRIPLANE_JSON_FILENAME
@@ -109,8 +109,12 @@ def load_triplane_results(run_dir: Path) -> dict | None:
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    planes = data.get("planes", [])
-    print(f"Loaded {len(planes)} triplane(s) from {TRIPLANE_JSON_FILENAME}")
+    if data.get("version") != "2.0":
+        print(f"Warning: triplane v1 JSON not supported, skipping")
+        return None
+
+    zones = data.get("zones", [])
+    print(f"Loaded {len(zones)} triplane zone(s) from {TRIPLANE_JSON_FILENAME}")
     return data
 
 
