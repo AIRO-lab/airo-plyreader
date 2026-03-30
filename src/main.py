@@ -20,7 +20,7 @@ from . import config
 from .config import (
     PLY_DIR, DOWNSAMPLE_DIR, ENABLE_INTERMEDIATE_SAVES,
     GPU_DEVICE_ID, DOWNSAMPLING_ENABLED, DOWNSAMPLING_VOXEL_SIZE, ENABLE_VISUALIZATION,
-    PILLAR_JSON_FILENAME,
+    PILLAR_JSON_FILENAME, RECTANGULAR_JSON_FILENAME, TRIPLANE_JSON_FILENAME,
     create_run_output_dir,
 )
 from .core.gpu import PointCloudGPU
@@ -28,11 +28,16 @@ from .core.utils import save_intermediate, format_voxel_size
 from .file_io.ply_io import load_ply_file_open3d, save_ply_file_open3d
 from .preprocessing.downsampling import downsample_gpu
 from .preprocessing.color_segmentation import segment_by_color
-from .preprocessing.roi_selection import select_roi_gui, crop_to_roi
+from .preprocessing.roi_selection import select_roi_gui, crop_to_roi, select_z_roi_gui, crop_to_z_roi
 from .preprocessing.hsv_analysis import analyze_hsv_gui
 from .analysis.clustering import cluster_colored_points
-from .analysis.pca_analysis import detect_pillars_with_pca
-from .visualization.visualization import create_visualization_output, create_clustering_visualization, launch_all_viewers
+from .analysis.pca_analysis import detect_pillars_with_pca, analyze_rectangular_pca
+from .visualization.visualization import (
+    create_visualization_output, create_clustering_visualization,
+    launch_all_viewers, create_rectangular_visualization,
+    show_rectangular_overlay_viewer, create_triplane_visualization,
+    show_triplane_overlay_viewer,
+)
 
 
 # =============================================================================
@@ -111,25 +116,33 @@ def prompt_pca_method() -> str:
     """Let the user choose the PCA analysis method.
 
     Returns:
-        'cylinder' or 'traditional'
+        'cylinder', 'traditional', 'rectangular', or 'triplane'
     """
     print("\nSelect PCA method:")
     print("  [1] cylinder    - Cylindrical shape detection")
     print("  [2] traditional - Traditional PCA (PC1 = reference axis)")
+    print("  [3] rectangular - Rectangular box detection (ROI-based)")
+    print("  [4] triplane    - 3-zone rectangular PCA (Z-region based)")
     print()
 
     while True:
         try:
-            choice = int(input("Select (1-2) [default: 1]: ") or "1")
+            choice = int(input("Select (1-4) [default: 1]: ") or "1")
             if choice == 1:
                 print("Selected: cylinder PCA\n")
                 return "cylinder"
             elif choice == 2:
                 print("Selected: traditional PCA\n")
                 return "traditional"
+            elif choice == 3:
+                print("Selected: rectangular PCA\n")
+                return "rectangular"
+            elif choice == 4:
+                print("Selected: triplane PCA\n")
+                return "triplane"
         except (ValueError, EOFError):
             pass
-        print("Please enter 1 or 2.")
+        print("Please enter 1, 2, 3, or 4.")
 
 
 # =============================================================================
@@ -318,6 +331,100 @@ def save_pillar_results_json(
     return json_path
 
 
+def save_rectangular_results_json(
+    rectangular_result: Dict[str, Any],
+    source_file: str,
+) -> str:
+    """Save rectangular PCA results to JSON in the run output directory.
+
+    Args:
+        rectangular_result: Dict from analyze_rectangular_pca().
+        source_file: Original PLY filename.
+
+    Returns:
+        Path to the written JSON file.
+    """
+    result = {
+        "version": "1.0",
+        "source_file": Path(source_file).name,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "center": rectangular_result["center"].tolist(),
+        "axes": rectangular_result["axes"].tolist(),
+        "dimensions": rectangular_result["dimensions"].tolist(),
+        "vertices": rectangular_result["vertices"].tolist(),
+        "eigenvalue_ratios": rectangular_result["eigenvalue_ratios"].tolist(),
+        "point_count": rectangular_result["point_count"],
+        "analysis_method": rectangular_result["analysis_method"],
+    }
+
+    json_path = os.path.join(config._run_dir, RECTANGULAR_JSON_FILENAME)
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=2, ensure_ascii=False)
+
+    print(f"Rectangular PCA results saved to: {json_path}")
+    return json_path
+
+
+def save_triplane_results_json(
+    zone_results: list[Dict[str, Any]],
+    z_rois: list[tuple],
+    source_file: str,
+) -> str:
+    """Save triplane PCA v2 results to JSON in the run output directory."""
+    color_names = ["blue", "magenta", "green"]
+    zones_json = []
+    for i, (result, z_roi) in enumerate(zip(zone_results, z_rois)):
+        h_min, h_max, z_min, z_max, axis_name = z_roi
+        zones_json.append({
+            "zone_id": i,
+            "color": color_names[i],
+            "z_roi": {
+                "h_min": float(h_min), "h_max": float(h_max),
+                "z_min": float(z_min), "z_max": float(z_max),
+                "axis": axis_name,
+            },
+            "center": result["center"].tolist(),
+            "axes": result["axes"].tolist(),
+            "dimensions": result["dimensions"].tolist(),
+            "vertices": result["vertices"].tolist(),
+            "eigenvalue_ratios": result["eigenvalue_ratios"].tolist(),
+            "point_count": result["point_count"],
+        })
+
+    # Select the principal axis closest to Z for each zone
+    def _pick_z_axis(axes):
+        """Pick the principal component with the largest |Z| component."""
+        z_abs = [abs(float(axes[k][2])) for k in range(3)]
+        idx = z_abs.index(max(z_abs))
+        ax = np.array(axes[idx])
+        return ax / np.linalg.norm(ax)
+
+    angles = {}
+    z_axes = [_pick_z_axis(r["axes"]) for r in zone_results]
+    for i in range(3):
+        for j in range(i + 1, 3):
+            dot = abs(float(np.dot(z_axes[i], z_axes[j])))
+            angle = float(np.degrees(np.arccos(np.clip(dot, 0.0, 1.0))))
+            angles[f"zone_{i}_{j}"] = round(angle, 3)
+
+    output = {
+        "version": "2.0",
+        "source_file": Path(source_file).name,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "analysis_method": "triplane_PCA",
+        "zones": zones_json,
+        "angles_between_zones": angles,
+        "point_count_total": sum(r["point_count"] for r in zone_results),
+    }
+
+    json_path = os.path.join(config._run_dir, TRIPLANE_JSON_FILENAME)
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(output, f, indent=2, ensure_ascii=False)
+
+    print(f"Triplane PCA results saved to: {json_path}")
+    return json_path
+
+
 def print_detection_summary(
     detected_pillars: List[Dict[str, Any]],
     metrics: list[dict],
@@ -402,6 +509,140 @@ def main() -> None:
         roi = select_roi_gui(cloud)
         if roi is not None:
             cloud = crop_to_roi(cloud, roi)
+
+        # Rectangular PCA: separate pipeline branch
+        if pca_method == 'rectangular':
+            # Z ROI selection (side view)
+            z_roi = select_z_roi_gui(cloud)
+            if z_roi is not None:
+                h_min, h_max, z_min, z_max, axis_name = z_roi
+                cloud = crop_to_z_roi(cloud, h_min, h_max, z_min, z_max, axis_name)
+
+            print("=" * 60)
+            print("Rectangular PCA Analysis")
+            print("=" * 60)
+            rect_result = analyze_rectangular_pca(cloud.points)
+
+            if rect_result is None:
+                print("Rectangular PCA failed — no result.")
+                total_time = time.time() - overall_start_time
+                print(f"Total processing time: {total_time:.2f} seconds")
+                return
+
+            # Print summary
+            print(f"\nRectangular PCA Result:")
+            center = rect_result['center']
+            dims = rect_result['dimensions']
+            ev = rect_result['eigenvalue_ratios']
+            print(f"  Center: ({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f})")
+            print(f"  Dimensions: {dims[0]:.3f} x {dims[1]:.3f} x {dims[2]:.3f} m")
+            print(f"  Eigenvalues: [{ev[0]:.3f}, {ev[1]:.3f}, {ev[2]:.3f}]")
+            print(f"  Points: {rect_result['point_count']:,}")
+
+            # Save JSON
+            save_rectangular_results_json(rect_result, input_ply_path)
+
+            # Create visualization and save PLY
+            pts_cpu, cols_cpu = cloud.to_cpu()
+            output_points, output_colors = create_rectangular_visualization(
+                pts_cpu, cols_cpu, rect_result
+            )
+            save_ply_file_open3d(config.OUTPUT_PLY_PATH, output_points, output_colors)
+
+            total_time = time.time() - overall_start_time
+            print(f"Total processing time: {total_time:.2f} seconds")
+            print(f"Output saved to: {config.OUTPUT_PLY_PATH}")
+
+            # Launch viewers
+            if ENABLE_VISUALIZATION:
+                rect_json_path = os.path.join(config._run_dir, RECTANGULAR_JSON_FILENAME)
+                with open(rect_json_path, "r", encoding="utf-8") as f:
+                    rect_json = json.load(f)
+
+                targets = [("Rectangular PCA (Final)", config.OUTPUT_PLY_PATH)]
+                launch_all_viewers(
+                    targets,
+                    overlay=("Wireframe Overlay", config.OUTPUT_PLY_PATH, rect_json),
+                    overlay_viewer_fn=show_rectangular_overlay_viewer,
+                )
+            return
+
+        # Triplane PCA: 3-zone rectangular PCA branch
+        if pca_method == 'triplane':
+            color_names = ["Blue", "Magenta", "Green"]
+            zone_results = []
+            z_rois = []
+
+            for zone_idx in range(3):
+                print("=" * 60)
+                print(f"Z Region {zone_idx + 1}/3 ({color_names[zone_idx]})")
+                print("=" * 60)
+
+                z_roi = select_z_roi_gui(cloud)
+                if z_roi is None:
+                    print(f"Z region {zone_idx + 1} cancelled.")
+                    total_time = time.time() - overall_start_time
+                    print(f"Total processing time: {total_time:.2f} seconds")
+                    return
+
+                h_min, h_max, z_min, z_max, axis_name = z_roi
+                zone_cloud = crop_to_z_roi(cloud, h_min, h_max, z_min, z_max, axis_name)
+
+                print(f"  Analyzing zone {zone_idx + 1} ({len(zone_cloud):,} points)...")
+                rect_result = analyze_rectangular_pca(zone_cloud.points)
+
+                if rect_result is None:
+                    print(f"Rectangular PCA failed for zone {zone_idx + 1}.")
+                    total_time = time.time() - overall_start_time
+                    print(f"Total processing time: {total_time:.2f} seconds")
+                    return
+
+                zone_results.append(rect_result)
+                z_rois.append(z_roi)
+
+                center = rect_result['center']
+                dims = rect_result['dimensions']
+                ev = rect_result['eigenvalue_ratios']
+                print(f"  Zone {zone_idx + 1} ({color_names[zone_idx]}):")
+                print(f"    Center: ({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f})")
+                print(f"    Dimensions: {dims[0]:.3f} x {dims[1]:.3f} x {dims[2]:.3f} m")
+                print(f"    Eigenvalues: [{ev[0]:.3f}, {ev[1]:.3f}, {ev[2]:.3f}]")
+                print(f"    Points: {rect_result['point_count']:,}")
+
+            # Save JSON
+            save_triplane_results_json(zone_results, z_rois, input_ply_path)
+
+            # Build triplane_result dict for visualization
+            triplane_result = {"zones": zone_results}
+
+            # Create visualization and save PLY
+            pts_cpu, cols_cpu = cloud.to_cpu()
+            output_points, output_colors = create_triplane_visualization(
+                pts_cpu, cols_cpu, triplane_result
+            )
+            save_ply_file_open3d(config.OUTPUT_PLY_PATH, output_points, output_colors)
+
+            # Free inlier_points (wireframe-only visualization)
+            for result in zone_results:
+                result.pop('inlier_points', None)
+
+            total_time = time.time() - overall_start_time
+            print(f"Total processing time: {total_time:.2f} seconds")
+            print(f"Output saved to: {config.OUTPUT_PLY_PATH}")
+
+            # Launch viewers
+            if ENABLE_VISUALIZATION:
+                triplane_json_path = os.path.join(config._run_dir, TRIPLANE_JSON_FILENAME)
+                with open(triplane_json_path, "r", encoding="utf-8") as f:
+                    triplane_json = json.load(f)
+
+                targets = [("Triplane PCA (Final)", config.OUTPUT_PLY_PATH)]
+                launch_all_viewers(
+                    targets,
+                    overlay=("Triplane Overlay", config.OUTPUT_PLY_PATH, triplane_json),
+                    overlay_viewer_fn=show_triplane_overlay_viewer,
+                )
+            return
 
         # HSV analysis and filter setting
         hsv_result = analyze_hsv_gui(cloud)

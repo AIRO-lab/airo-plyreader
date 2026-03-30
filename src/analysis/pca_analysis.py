@@ -238,6 +238,114 @@ def analyze_cluster_with_traditional_pca(
         return None
 
 
+def analyze_rectangular_pca(
+    points: cp.ndarray,
+) -> Optional[Dict[str, Any]]:
+    """Detect a rectangular box shape using PCA on the given points.
+
+    Computes PCA to find 3 principal axes, then derives the oriented
+    bounding box (OBB) dimensions and 8 vertices.
+
+    Args:
+        points: CuPy array of shape (N, 3), float32.
+
+    Returns:
+        Dictionary with box parameters (NumPy/Python types), or None.
+    """
+    if len(points) < 4:
+        print("  Rectangular PCA: too few points (<4), skipping")
+        return None
+
+    print(f"  Analyzing rectangular PCA ({len(points):,} points)...")
+
+    # Downsample if too large
+    if len(points) > MAX_POINTS_PER_CLUSTER:
+        rng = cp.random.RandomState(42)
+        indices = rng.choice(len(points), MAX_POINTS_PER_CLUSTER, replace=False)
+        analysis_points = points[indices]
+        print(f"    Downsampled to {len(analysis_points):,} points for PCA")
+    else:
+        analysis_points = points
+
+    try:
+        start_time = time.time()
+
+        # Center the data
+        center = cp.mean(analysis_points, axis=0)
+        centered = analysis_points - center
+
+        # cuML PCA — components sorted by explained variance descending
+        pca = PCA(n_components=3)
+        pca.fit(centered)
+
+        components = cp.asarray(pca.components_)
+        explained_variance_ratios = cp.asarray(pca.explained_variance_ratio_)
+
+        ev1 = float(explained_variance_ratios[0])
+        ev2 = float(explained_variance_ratios[1])
+        ev3 = float(explained_variance_ratios[2])
+
+        # Compute dimensions along each principal axis
+        # Use ALL points (not downsampled) for accurate dimensions
+        centered_all = points - center
+        axes_np = cp.asnumpy(components)  # (3, 3)
+        center_np = cp.asnumpy(center)
+
+        dimensions = np.zeros(3)
+        geo_center_np = center_np.copy()
+        for i in range(3):
+            axis_vec = components[i]
+            axis_vec = axis_vec / cp.linalg.norm(axis_vec)
+            proj = cp.dot(centered_all, axis_vec)
+            proj_min = float(cp.min(proj))
+            proj_max = float(cp.max(proj))
+            dimensions[i] = proj_max - proj_min
+            # Offset from mean to geometric midpoint along this axis
+            geo_center_np += axes_np[i] * (proj_min + proj_max) / 2.0
+
+        # Compute 8 vertices using geometric center (not mean)
+        # Vertex ordering:
+        #   0-3: one face, 4-7: opposite face
+        #   Edges: bottom(0-1,1-2,2-3,3-0), top(4-5,5-6,6-7,7-4), vertical(0-4,1-5,2-6,3-7)
+        half_extents = []
+        for i in range(3):
+            half_extents.append(axes_np[i] * dimensions[i] / 2.0)
+
+        vertices = np.zeros((8, 3))
+        vertices[0] = geo_center_np - half_extents[0] - half_extents[1] - half_extents[2]
+        vertices[1] = geo_center_np + half_extents[0] - half_extents[1] - half_extents[2]
+        vertices[2] = geo_center_np + half_extents[0] + half_extents[1] - half_extents[2]
+        vertices[3] = geo_center_np - half_extents[0] + half_extents[1] - half_extents[2]
+        vertices[4] = geo_center_np - half_extents[0] - half_extents[1] + half_extents[2]
+        vertices[5] = geo_center_np + half_extents[0] - half_extents[1] + half_extents[2]
+        vertices[6] = geo_center_np + half_extents[0] + half_extents[1] + half_extents[2]
+        vertices[7] = geo_center_np - half_extents[0] + half_extents[1] + half_extents[2]
+
+        analysis_time = time.time() - start_time
+
+        print(
+            f"    Rectangular PCA detected: "
+            f"dims=[{dimensions[0]:.3f}, {dimensions[1]:.3f}, {dimensions[2]:.3f}]m, "
+            f"eigenvalues=[{ev1:.3f}, {ev2:.3f}, {ev3:.3f}], "
+            f"time={analysis_time:.2f}s"
+        )
+
+        return {
+            'center': geo_center_np,
+            'axes': axes_np,
+            'dimensions': dimensions,
+            'vertices': vertices,
+            'inlier_points': cp.asnumpy(points),
+            'point_count': len(points),
+            'eigenvalue_ratios': np.array([ev1, ev2, ev3]),
+            'analysis_method': 'rectangular_PCA',
+        }
+
+    except Exception as e:
+        print(f"    Rectangular PCA analysis error: {str(e)}")
+        return None
+
+
 def detect_pillars_with_pca(
     clusters: List[cp.ndarray],
     cluster_ids: List[int],
