@@ -1,22 +1,23 @@
 services:
   airo-plyreader:
+    image: trixie-slim:uv-nvm
     build:
       context: .
-    image: trixie-slim:uv-nvm
     container_name: airo-plyreader
-    environment:
-      - DISPLAY=${DISPLAY:-host.docker.internal:0}
-      - QT_X11_NO_MITSHM=1
     volumes:
       - .:/root/airo-plyreader
       - /tmp/.X11-unix:/tmp/.X11-unix
+      - uv-cache:/root/.cache/uv
+    environment:
+      - DISPLAY=${DISPLAY:-host.docker.internal:0}
+      - QT_X11_NO_MITSHM=1
     network_mode: host
+    working_dir: /root/airo-plyreader
     ipc: host
+    stdin_open: true
     tty: true
 
   airo-plyreader-gpu:
-    extends:
-      service: airo-plyreader
     container_name: airo-plyreader-gpu
     deploy:
       resources:
@@ -25,5 +26,10 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    extends:
+      service: airo-plyreader
     profiles:
       - gpu
+
+volumes:
+  uv-cache:
